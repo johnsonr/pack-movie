@@ -1,0 +1,23 @@
+# Focused chat surface for movie work.
+#
+# A "focus" is a named scoping of the assistant's chat surface — picks
+# a persona, picks a set of packs whose skills are visible to the chat
+# LLM, and hides everything else. The point is routing reliability:
+# with 30+ skills loaded in a typical workspace, even a sharply-written
+# pack skill can lose to its competitors. Strip the competitors out and
+# the LLM has nothing to confuse the recommend-movie skill with.
+#
+# Activate via `/focus movies` in chat. Type `/focus off` to leave.
+#
+# Requires the framework's focus support (assistant repo Phase 1
+# follow-up) — older builds parse this file but the chat path doesn't
+# consult it, so installing this on a pre-focus assistant is harmless
+# and just sits there until the framework catches up.
+
+name: movies
+displayName: Movies
+description: "Recommend, rate, and recall films"
+icon: "🎬"
+defaultPersona: roger     # the Ebert-style voice the pack ships
+packs: [movie]            # only this pack's skills + APIs are visible to the LLM
+builtins: true            # keep the framework's built-in chat tools (memory, repository, etc.)
