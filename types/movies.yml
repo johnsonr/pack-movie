@@ -37,6 +37,14 @@
     second one. Reads of this collection power "what have I rated?", "what
     did I think of X?", and the "exclude already-seen" filter when proposing
     new recommendations.
+  # `(User)-[:RATED]->(MovieRating)` reads more naturally than the default
+  # `(MovieRating)-[:OWNED_BY]->(User)` for the recall query "what have I
+  # rated?" — `MATCH (u:User {id: $userId})-[:RATED]->(r) RETURN r`.
+  # The framework emits this edge automatically on every `create_entry`
+  # against this type (since Phase 1 of the graph-backed repository).
+  userAnchor:
+    predicate: RATED
+    direction: from-user
   properties:
     imdbId: "IMDb id of the rated Movie. Use the same value as the corresponding Movie.imdbId so the two records can be joined."
     title: "Title of the rated movie, denormalised for cheap recall without a join."
