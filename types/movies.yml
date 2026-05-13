@@ -1,0 +1,47 @@
+# Movie domain types.
+#
+# Deliberately small: just `Movie` (canonical metadata for a film, keyed by IMDb id)
+# and `MovieRating` (the user's score for a Movie). Everything else that the
+# original movie-finder agent kept on its `MovieBuff` user object — country code,
+# preferred streaming services, hobbies, "movie likes / dislikes", free-form
+# `about` text — is intentionally NOT redeclared here. That information is the
+# user's profile, and the assistant already extracts and stores user-profile
+# facts via the DICE proposition pipeline ("user lives in AU", "user uses
+# Netflix and Stan", "user likes Tarantino"). Re-modelling it as a separate
+# `MovieBuff` entity would just create a second source of truth that drifts
+# from the proposition graph.
+#
+# Both types intentionally use the description-only shorthand for properties.
+# When richer typing is needed (e.g. validation rules on `rating`) flip a
+# property to the object form — see `src/main/kotlin/com/embabel/assistant/
+# workspace/types/PropertySpec.kt` for the schema.
+
+- name: Movie
+  description: |
+    A film, keyed by IMDb id. The canonical metadata record the assistant
+    references when discussing a movie; created on first OMDb lookup and
+    re-used for every subsequent rating, recommendation, or recall.
+  properties:
+    imdbId: "IMDb id, e.g. 'tt0110912' for Pulp Fiction. Stable identifier — the LLM should reuse an existing Movie by imdbId rather than creating a duplicate."
+    title: "Display title, e.g. 'Pulp Fiction'."
+    year: "Release year, four-digit string."
+    genre: "Comma-separated genres as returned by OMDb, e.g. 'Crime, Drama'."
+    director: "Primary director(s) as returned by OMDb."
+    runtimeMinutes: "Runtime in minutes, as a string (OMDb returns it as 'NNN min'; strip the suffix when storing)."
+
+- name: MovieRating
+  description: |
+    The current user's rating for a Movie. Use this to record what the user
+    thinks of films they've watched. One rating per (user, movie) — when the
+    user re-rates a movie, update the existing entry rather than creating a
+    second one. Reads of this collection power "what have I rated?", "what
+    did I think of X?", and the "exclude already-seen" filter when proposing
+    new recommendations.
+  properties:
+    imdbId: "IMDb id of the rated Movie. Use the same value as the corresponding Movie.imdbId so the two records can be joined."
+    title: "Title of the rated movie, denormalised for cheap recall without a join."
+    rating:
+      type: int
+      description: "Score from 1 (terrible) to 10 (masterpiece). Whole numbers only."
+    notes: "Optional one-line reaction from the user, in their own words."
+    watchedOn: "Optional ISO-8601 date the user watched the movie."

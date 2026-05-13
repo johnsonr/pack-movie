@@ -1,0 +1,24 @@
+name: movie
+description: |
+  Movie recommendations grounded in what the user has rated, what's actually
+  streamable in their country, and live OMDb metadata. Bundles a `recommend-movie`
+  Agent Skill that owns the workflow (recall ratings → look up titles → filter by
+  streaming availability → write up in a Roger-Ebert-style voice via the bundled
+  `roger` personality), and declares the `Movie` and `MovieRating` types so
+  ratings persist into the workspace and feed back into future recommendations.
+version: 0.1.0
+author: Rod Johnson
+url: https://github.com/johnsonr/pack-movie
+tags:
+  - movies
+  - recommendations
+  - openapi
+  - skills
+  - personalities
+exports:
+  - omdb
+  - streaming_availability
+  - recommend-movie
+  - roger
+  - Movie
+  - MovieRating

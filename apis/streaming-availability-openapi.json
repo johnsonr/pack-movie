@@ -1,0 +1,222 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Streaming Availability API",
+    "description": "Movie of the Night's Streaming Availability API on RapidAPI — answers 'where can I watch this movie?' for a given country. Used by the movie pack to filter recommendations down to titles the user can actually stream right now.\n\nDocs: https://docs.movieofthenight.com/. Auth: API key in `X-RapidAPI-Key` header (deployment-level, set OMDB-style env var `X_RAPIDAPI_KEY`).",
+    "version": "1.0.0"
+  },
+  "servers": [
+    { "url": "https://streaming-availability.p.rapidapi.com" }
+  ],
+  "security": [
+    { "ApiKeyAuth": [] }
+  ],
+  "paths": {
+    "/shows/{id}": {
+      "get": {
+        "operationId": "getShow",
+        "summary": "Where a single show can be streamed.",
+        "description": "Looks up a show by IMDb id (cheapest path — same id you already have on the Movie record from OMDb) and returns the full per-country streaming options array. Always pass the `country` query param to filter down to the user's market — otherwise the response is enormous (every supported country) and most of it is irrelevant.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "IMDb id including the leading 'tt', e.g. 'tt0110912'. Same value as Movie.imdbId.",
+            "schema": { "type": "string", "pattern": "^tt[0-9]{7,10}$" }
+          },
+          {
+            "name": "country",
+            "in": "query",
+            "required": true,
+            "description": "ISO 3166-1 alpha-2 country code, lowercase, e.g. 'us', 'gb', 'au'. The user's country — recall it from their profile via DICE; if unknown, ASK them, don't guess.",
+            "schema": { "type": "string", "minLength": 2, "maxLength": 2 }
+          },
+          {
+            "name": "series_granularity",
+            "in": "query",
+            "required": false,
+            "description": "For series only — 'show' (default), 'season', or 'episode'. Movies ignore this.",
+            "schema": { "type": "string", "enum": ["show", "season", "episode"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Full show record including the per-country `streamingOptions` map.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Show" }
+              }
+            }
+          },
+          "404": {
+            "description": "No show found with that id."
+          }
+        }
+      }
+    },
+    "/shows/search/title": {
+      "get": {
+        "operationId": "searchShowsByTitle",
+        "summary": "Search for shows by title within a single country's catalogue.",
+        "description": "Use when you only have a title and need both the streaming-availability record and an IMDb id. Returns up to 25 hits per call; results are scoped to ONE country (passed via `country`). Prefer `getShow` whenever you already have an IMDb id from OMDb — it's one call instead of search-then-get.",
+        "parameters": [
+          {
+            "name": "country",
+            "in": "query",
+            "required": true,
+            "description": "ISO 3166-1 alpha-2 country code, lowercase. Same as `getShow`.",
+            "schema": { "type": "string", "minLength": 2, "maxLength": 2 }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "required": true,
+            "description": "Title or substring of the title to search for.",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "show_type",
+            "in": "query",
+            "required": false,
+            "description": "Restrict to 'movie' or 'series'. Default is both.",
+            "schema": { "type": "string", "enum": ["movie", "series"] }
+          },
+          {
+            "name": "series_granularity",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["show", "season", "episode"] }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of matching shows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Show" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-RapidAPI-Key"
+      }
+    },
+    "schemas": {
+      "Show": {
+        "type": "object",
+        "description": "A movie or series with per-country streaming availability. Only the fields the recommend-movie skill actually consumes are typed below; the API returns more.",
+        "properties": {
+          "itemType": { "type": "string", "enum": ["show"] },
+          "showType": { "type": "string", "enum": ["movie", "series"] },
+          "id": { "type": "string", "description": "Streaming Availability's own id, NOT the IMDb id." },
+          "imdbId": { "type": "string", "description": "IMDb id including the 'tt' prefix. Use this to join back to the Movie record." },
+          "tmdbId": { "type": "string" },
+          "title": { "type": "string" },
+          "overview": { "type": "string" },
+          "releaseYear": { "type": "integer" },
+          "genres": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": { "type": "string" },
+                "name": { "type": "string" }
+              }
+            }
+          },
+          "directors": { "type": "array", "items": { "type": "string" } },
+          "cast": { "type": "array", "items": { "type": "string" } },
+          "rating": { "type": "integer", "description": "0–100 critic score (NOT the user's MovieRating)." },
+          "runtime": { "type": "integer", "description": "Runtime in minutes." },
+          "streamingOptions": {
+            "type": "object",
+            "description": "Map keyed by ISO country code. Each value is an array of streaming options (one per service × type). When you call with `country=us` you get only the `us` key — that's the array to read.",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/StreamingOption" }
+            }
+          }
+        },
+        "required": ["showType", "imdbId", "title"]
+      },
+      "StreamingOption": {
+        "type": "object",
+        "description": "One way the user can watch this show on one service. The user might have access to several of these (different services, different prices); pick the cheapest matching their subscriptions.",
+        "properties": {
+          "service": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "description": "Service id, e.g. 'netflix', 'prime', 'disney'. Match against the user's known subscriptions." },
+              "name": { "type": "string", "description": "Display name, e.g. 'Netflix', 'Prime Video'." },
+              "homePage": { "type": "string", "format": "uri" },
+              "themeColorCode": { "type": "string" }
+            },
+            "required": ["id", "name"]
+          },
+          "type": {
+            "type": "string",
+            "enum": ["subscription", "free", "rent", "buy", "addon"],
+            "description": "How the user watches it. Prefer 'subscription' / 'free' over 'rent' / 'buy' when surfacing recommendations."
+          },
+          "link": {
+            "type": "string",
+            "format": "uri",
+            "description": "Direct deep-link to the title on the service. Render as a markdown link in chat."
+          },
+          "videoLink": { "type": "string", "format": "uri", "description": "Trailer or preview link, when present." },
+          "quality": { "type": "string", "enum": ["sd", "hd", "qhd", "uhd"] },
+          "audios": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "language": { "type": "string" },
+                "region": { "type": "string" }
+              }
+            }
+          },
+          "subtitles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "closedCaptions": { "type": "boolean" },
+                "locale": {
+                  "type": "object",
+                  "properties": {
+                    "language": { "type": "string" },
+                    "region": { "type": "string" }
+                  }
+                }
+              }
+            }
+          },
+          "price": {
+            "type": "object",
+            "description": "Present only on rent/buy. Subscription/free options have no price.",
+            "properties": {
+              "amount": { "type": "string" },
+              "currency": { "type": "string" },
+              "formatted": { "type": "string" }
+            }
+          },
+          "expiresOn": { "type": "integer", "description": "Unix epoch seconds. When the title leaves this service, if known." },
+          "availableSince": { "type": "integer" }
+        },
+        "required": ["service", "type", "link"]
+      }
+    }
+  }
+}

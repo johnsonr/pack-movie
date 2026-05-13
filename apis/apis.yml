@@ -1,0 +1,41 @@
+# Movie metadata + streaming availability.
+#
+# Both specs are vendored — neither vendor publishes an authoritative
+# OpenAPI 3 document we can URL-fetch reliably, and pinning a vendored
+# copy is what `pack-travel` already does for Google Maps. Specs are
+# intentionally narrow: just the operations `recommend-movie` actually
+# calls. Add more here when a need arises rather than expanding the
+# operation-ids list speculatively (each extra op grows the typed
+# surface the LLM sees).
+#
+# OMDb auth: API key in the `apikey` query parameter (the spec declares
+# `ApiKeyAuth` as `apiKey in: query name: apikey`, so OpenApiLearner
+# injects it automatically). Resolved from the `OMDB_API_KEY` env var.
+#
+# Streaming Availability auth: API key in the `X-RapidAPI-Key` header.
+# RapidAPI also requires `X-RapidAPI-Host` — that's a constant declared
+# in the spec's request defaults, NOT a per-user secret. Resolved from
+# the `X_RAPIDAPI_KEY` env var.
+#
+# Both keys are deployment-level (one OMDb account, one RapidAPI
+# account), NOT per-user OAuth — get keys from
+# https://www.omdbapi.com/apikey.aspx and
+# https://rapidapi.com/movie-of-the-night-movie-of-the-night-default/api/streaming-availability/
+# and set the env vars on the assistant process.
+
+- url: omdb-openapi.json
+  name: omdb
+  type: openapi
+  auth: api-key
+  token-env: OMDB_API_KEY
+  operation-ids:
+    - getMovie
+
+- url: streaming-availability-openapi.json
+  name: streaming_availability
+  type: openapi
+  auth: api-key
+  token-env: X_RAPIDAPI_KEY
+  operation-ids:
+    - getShow
+    - searchShowsByTitle
