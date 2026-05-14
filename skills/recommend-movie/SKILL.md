@@ -32,19 +32,51 @@ in one query.
 
 ## Cardinal rules
 
-1. **Don't fabricate IMDb ids, ratings, or streaming availability.** Every id
+> The first two rules below capture the two ways this skill has been seen
+> to fail in the wild. Re-read them every turn before writing a script
+> against `gateway.streaming_availability.*`. They are not optional.
+
+1. **NEVER default the country. ASK.** The user's country lives in their
+   profile (DICE extracts it from chat as "user lives in &lt;X&gt;") and is
+   surfaced in your context block as `country: <code>`. If you cannot
+   see a country there, the answer is to **ask the user**, not to guess.
+   Defaulting to `'us'` (or `'gb'`, or any other country) when the user
+   is in Australia returns wrong results AND the user can't tell you
+   guessed — they get a confident "Fargo isn't streaming in your country"
+   that is technically true for the country you guessed and totally
+   misleading for theirs. This is THE most common failure mode of this
+   skill. Examples:
+   - WRONG: `const country = 'us'; // Assuming US`
+   - WRONG: `const country = userCountry || 'us';`
+   - RIGHT: derive `country` from the user-context block in this
+     conversation; if absent, **return a short clarifying message**
+     (`"Which country are you in? I need this to check streaming."`)
+     and STOP — do not call `getShow` until the user replies.
+2. **The `getShow` response field is `streamingOptions`, NOT
+   `streamingInfo`.** This API is one of those where a plausible-but-wrong
+   field name causes the script's defensive branch to falsely report
+   "not available". The real shape is:
+   ```js
+   const r = await gateway.streaming_availability.getShow({ id, country });
+   // r.streamingOptions[country] is an array of StreamingOption,
+   // each with { service: { id, name, ... }, type, link, ... }
+   ```
+   - WRONG: `r.streamingInfo` — undefined, every defensive branch fires
+   - WRONG: `r.streamingInfo[country]` — same
+   - RIGHT: `r.streamingOptions?.[country]` — array of options, or undefined
+     if the show has no streaming presence in that country
+   When in doubt, log the response shape (`console.log(JSON.stringify(r,
+   null, 2))`) before reading fields. The `Show` schema in the typed
+   surface is also authoritative — read it.
+3. **Don't fabricate IMDb ids, ratings, or streaming availability.** Every id
    comes from an OMDb call; every "available on Netflix" claim comes from a
    Streaming Availability call. Never guess.
-2. **Reuse existing Movie records by `imdbId`.** Before `create_entry` for a
+4. **Reuse existing Movie records by `imdbId`.** Before `create_entry` for a
    new Movie, check whether one already exists (`list_entries` with
    `filter: imdbId=tt...`). The IMDb id is the canonical key.
-3. **One MovieRating per (user, movie).** When the user re-rates a film,
+5. **One MovieRating per (user, movie).** When the user re-rates a film,
    `update_entry` the existing record rather than creating a duplicate.
-4. **Country code is required for streaming.** The `streaming_availability`
-   API will return nothing useful without it. Recall the user's country from
-   their profile (DICE will have extracted it from prior chat as
-   "user lives in <X>"). If genuinely unknown, ASK — do not default to 'us'.
-5. **Voice.** When writing up a recommendation or a rating, switch to the
+6. **Voice.** When writing up a recommendation or a rating, switch to the
    `roger` personality (Ebert-style: sharp, image-led, one human observation
    per paragraph). For status / clarification messages, stay in the default
    assistant voice.
@@ -71,11 +103,13 @@ in one query.
    candidate OMDb can't find — it's almost certainly a hallucination on
    your side.
 5. **Filter by streaming.** For each verified candidate, call
-   `gateway.streaming_availability.getShow({id: imdbID, country})`. Keep
-   only films with at least one `subscription` or `free` option in the
-   user's country. Note the matching service(s) — if you know which
-   services the user subscribes to (DICE will have those facts too),
-   prefer titles available on those.
+   `gateway.streaming_availability.getShow({id: imdbID, country})`. The
+   response has the streaming list under `streamingOptions[country]`
+   (NOT `streamingInfo` — see Cardinal rule 2). Keep only films with at
+   least one `subscription` or `free` option in the user's country.
+   Note the matching service(s) — if you know which services the user
+   subscribes to (DICE will have those facts too), prefer titles
+   available on those.
 6. **Write up the top 3** in the `roger` voice. One paragraph each.
    Markdown link to the streaming option's `link`. Lead with the image,
    not the plot summary.
