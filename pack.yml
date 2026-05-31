@@ -1,12 +1,14 @@
 name: movie
 description: |
   Movie recommendations grounded in what the user has rated, what's actually
-  streamable in their country, and live OMDb metadata. Bundles a `recommend-movie`
-  Agent Skill that owns the workflow (recall ratings → look up titles → filter by
-  streaming availability → write up in a Roger-Ebert-style voice via the bundled
-  `roger` personality), and declares the `Movie` and `MovieRating` types so
-  ratings persist into the workspace and feed back into future recommendations.
-version: 0.1.0
+  streamable in their country, and live OMDb metadata. Ships three short
+  Agent Skills — `recommend-movie` (pick something to watch / where can I
+  stream X), `rate-movie` (record a rating), `recall-movies` (read prior
+  ratings) — backed by the `Movie` and `MovieRating` types so ratings
+  persist into the workspace graph and feed back into future
+  recommendations. The bundled `roger` personality gives the
+  recommendation write-up a Roger-Ebert voice.
+version: 0.2.0
 author: Rod Johnson
 url: https://github.com/johnsonr/pack-movie
 tags:
@@ -19,6 +21,8 @@ exports:
   - omdb
   - streaming_availability
   - recommend-movie
+  - rate-movie
+  - recall-movies
   - roger
   - Movie
   - MovieRating

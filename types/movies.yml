@@ -21,8 +21,17 @@
     A film, keyed by IMDb id. The canonical metadata record the assistant
     references when discussing a movie; created on first OMDb lookup and
     re-used for every subsequent rating, recommendation, or recall.
+  # Shared reference metadata, NOT user-owned. A film isn't "owned" by a
+  # user — the user's relationship to it is the rating. Without this,
+  # `Movie` falls to the framework default (`OWNED_BY` from-entry) and
+  # every film wrongly gets `(Movie)-[:OWNED_BY]->(User)`, double-anchoring
+  # it alongside the rating. `false` makes `MovieRating` the SOLE bridge:
+  #   (User)-[:RATED]->(MovieRating)-[:OF]->(Movie)
+  userAnchor: false
   properties:
-    imdbId: "IMDb id, e.g. 'tt0110912' for Pulp Fiction. Stable identifier — the LLM should reuse an existing Movie by imdbId rather than creating a duplicate."
+    imdbId:
+      identity: true
+      description: "IMDb id, e.g. 'tt0110912' for Pulp Fiction. The identity key — the store MERGEs on it (deterministic, workspace-scoped id), so the same film is one Movie node however many times it's referenced."
     title: "Display title, e.g. 'Pulp Fiction'."
     year: "Release year, four-digit string."
     genre: "Comma-separated genres as returned by OMDb, e.g. 'Crime, Drama'."
@@ -41,15 +50,18 @@
   # `(MovieRating)-[:OWNED_BY]->(User)` for the recall query "what have I
   # rated?" — `MATCH (u:User {id: $userId})-[:RATED]->(r) RETURN r`.
   # The framework emits this edge automatically on every `create_entry`
-  # against this type (since Phase 1 of the graph-backed repository).
+  # against this type — see RepositoryStore.applyUserAnchor.
   userAnchor:
     predicate: RATED
     direction: from-user
   properties:
-    imdbId: "IMDb id of the rated Movie. Use the same value as the corresponding Movie.imdbId so the two records can be joined."
+    imdbId:
+      identity: true
+      description: "IMDb id of the rated Movie. The identity key: with the user anchor giving workspace scope, this yields one rating per (user, movie) — a re-rate updates in place instead of duplicating. Use the same value as the corresponding Movie.imdbId so the two records can be joined."
     title: "Title of the rated movie, denormalised for cheap recall without a join."
     rating:
       type: int
+      required: true
       description: "Score from 1 (terrible) to 10 (masterpiece). Whole numbers only."
     notes: "Optional one-line reaction from the user, in their own words."
     watchedOn: "Optional ISO-8601 date the user watched the movie."
