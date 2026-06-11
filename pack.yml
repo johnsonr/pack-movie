@@ -20,9 +20,7 @@ tags:
 exports:
   - omdb
   - streaming_availability
-  - recommend-movie
-  - rate-movie
-  - recall-movies
+  - movie
   - roger
   - Movie
   - MovieRating

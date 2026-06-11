@@ -16,7 +16,7 @@ owns the persistence and the UI.
 
 | Directory | What it contributes |
 |---|---|
-| `apis/` | Two OpenAPI 3 specs — OMDb (film metadata) and Streaming Availability (per-country streaming options). Calls go through `gateway.omdb.*` / `gateway.streaming_availability.*` from `execute_javascript` / `execute_python`. |
+| `apis/` | Two OpenAPI 3 specs — OMDb (film metadata) and Streaming Availability (per-country streaming options). Calls go through `gateway.omdb.*` / `gateway.streamingAvailability.*` from `execute_javascript` / `execute_python`. |
 | `types/movies.yml` | `Movie` (canonical metadata, keyed by IMDb id) and `MovieRating` (the user's score for a Movie). Read/written via the workspace repository tools. `MovieRating` declares `userAnchor: { predicate: RATED, direction: from-user }`, so the assistant auto-emits `(User)-[:RATED]->(MovieRating)` on every `create_entry`. |
 | `skills/recommend-movie/` | "What should I watch?" / "where can I stream X?" — owns the OMDb + Streaming Availability workflow and the cardinal rules (don't default the country; the response field is `streamingOptions`, not `streamingInfo`). Activates only for the recommend / availability paths. |
 | `skills/rate-movie/` | "I just watched X, give it N" — ensures the `Movie` record exists, then creates or updates the `MovieRating` with an explicit `OF` edge back to the Movie. The `RATED` user edge is automatic. |
@@ -51,7 +51,7 @@ not per-user OAuth. End users do not need to authorize anything.
 
 Install via the assistant's pack manager. On install the pack contributes:
 
-- `gateway.omdb.*` and `gateway.streaming_availability.*` tool surfaces
+- `gateway.omdb.*` and `gateway.streamingAvailability.*` tool surfaces
   (visible inside `execute_javascript` / `execute_python`).
 - The `Movie` and `MovieRating` types, surfaced through the workspace
   repository tools (`describe`, `list_entries`, `create_entry`,
