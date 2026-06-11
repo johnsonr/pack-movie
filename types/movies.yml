@@ -37,28 +37,11 @@
     genre: "Comma-separated genres as returned by OMDb, e.g. 'Crime, Drama'."
     director: "Primary director(s) as returned by OMDb."
     runtimeMinutes: "Runtime in minutes, as a string (OMDb returns it as 'NNN min'; strip the suffix when storing)."
-  # Methods callable on a Movie held in working state — each backed by one of
-  # this pack's own gateway APIs (no Kotlin). `$imdbId` reads the Movie's own
-  # field; `#param` reads a method argument. The LLM calls e.g.
-  # `await movie.details({})` / `await movie.streaming({ country: 'us' })`.
-  methods:
-    - name: details
-      description: "Fetch fresh OMDb metadata (full plot, ratings, runtime) for this movie."
-      gatewayTool: "omdb.getMovie"
-      args:
-        i: "$imdbId"
-        plot: "full"
-      returns: Movie
-    - name: streaming
-      description: "Where this movie is streaming in the given country (ISO-3166 alpha-2, lowercase, e.g. 'us')."
-      gatewayTool: "streaming_availability.getShow"
-      params:
-        - name: country
-          type: string
-      args:
-        id: "$imdbId"
-        country: "#country"
-      returns: any
+  # Methods on a Movie held in working state (`movie.details({})`,
+  # `movie.streaming({ country })`) are authored in TypeScript under `src/api/`
+  # and COMPILED — they are not declared here. See `src/api/movie.ts` and the
+  # README's "Compiled methods" section. This YAML carries only the schema.
+  #
   # When the LLM looks a film up via OMDb, auto-bind the result as a Movie in
   # working state (named after a slug of the title, e.g. 'jade') so it's in
   # scope for follow-ups — no explicit save needed. fieldMap maps the OMDb
