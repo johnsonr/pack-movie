@@ -1,22 +1,12 @@
 /**
- * The fields a `Movie` method handler reads off the in-scope object. The
- * canonical schema lives in `types/movies.yml`; this is just the slice the
- * compiled methods need (identity is `imdbId`).
- */
-export interface Movie {
-  imdbId: string;
-  title?: string;
-  year?: string;
-  genre?: string;
-  director?: string;
-  runtimeMinutes?: string;
-}
-
-/**
  * The current user's rating of a Movie. Identity is `imdbId`; the framework
- * anchors it to the user via `RATED` on create_entry, so one row per
+ * anchors it to the user via `RATED` on createEntry, so one row per
  * (user, movie) — a re-rate updates in place. Canonical schema lives in
- * `types/movies.yml`; this is the slice the rate handler writes.
+ * `types/movies.yml`; this is the slice the `Movie.rate` method writes.
+ *
+ * (`Movie` itself is a class — see `src/api/movie.ts` — so its shape and methods
+ * live together. `MovieRating` is plain data the user writes, with no methods of
+ * its own, so it stays an interface.)
  */
 export interface MovieRating {
   /** IMDb id of the rated Movie — the identity key (same value as Movie.imdbId). */
