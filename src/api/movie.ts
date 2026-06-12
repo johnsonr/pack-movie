@@ -1,5 +1,79 @@
 import { Entity } from "@embabel/runtime-types";
-import type { MovieRating } from "../types/movie";
+
+// ─── Data shapes ────────────────────────────────────────────────────────────
+// Plain records the methods read or write. They have no behaviour of their own,
+// so they stay interfaces and live beside the `Movie` type that uses them.
+
+/**
+ * The current user's rating of a Movie. Identity is `imdbId`; the framework
+ * anchors it to the user via `RATED` on createEntry, so one row per
+ * (user, movie) — a re-rate updates in place. Canonical schema lives in
+ * `types/movies.yml`; this is the slice `Movie.rate` writes.
+ */
+export interface MovieRating {
+  /** IMDb id of the rated Movie — the identity key (same value as Movie.imdbId). */
+  imdbId: string;
+  /** Title, denormalised for cheap recall without a join. */
+  title?: string;
+  /** Score from 1 (terrible) to 10 (masterpiece). Whole numbers only. */
+  rating: number;
+  /** Optional one-line reaction in the user's own words. */
+  notes?: string;
+  /** Optional ISO-8601 date the user watched the movie. */
+  watchedOn?: string;
+}
+
+/** One way to watch a title, as returned per country by Streaming Availability. */
+export interface StreamingOption {
+  service?: { id?: string; name?: string };
+  /** `subscription` | `rent` | `buy` | `free` | `addon`. */
+  type?: string;
+  /** Deep link to the title on the service. */
+  link?: string;
+  /** Trailer URL, when the service provides one. */
+  videoLink?: string;
+}
+
+/** A Streaming Availability "show" record — the slice the pack reads. */
+export interface StreamingShow {
+  imdbId?: string;
+  title?: string;
+  /** Streaming options keyed by ISO-3166 alpha-2 country code (e.g. `us`, `au`). */
+  streamingOptions?: Record<string, StreamingOption[]>;
+}
+
+/** An OMDb movie record. OMDb returns Title-cased keys; this is the slice the pack reads. */
+export interface OmdbMovie {
+  Title?: string;
+  Year?: string;
+  Rated?: string;
+  Runtime?: string;
+  Genre?: string;
+  Director?: string;
+  Plot?: string;
+  Poster?: string;
+  imdbRating?: string;
+  imdbID?: string;
+}
+
+/** What the workspace repository returns when a MovieRating is created or updated. */
+export interface RatingEntry {
+  id: string;
+}
+
+/**
+ * The gateway ops `Movie` calls, typed. Until `embabel-pack sync` generates the
+ * host's fully-typed `GatewayContext`, a pack types the slice it uses itself and
+ * reads it through {@link Movie.api}, so method bodies and return types are fully
+ * typed (no `unknown`). Swap this for the generated surface when `sync` lands.
+ */
+interface MovieGateway {
+  streamingAvailability: { getShow(args: { id: string; country: string }): Promise<StreamingShow> };
+  omdb: { getMovie(args: { i: string; plot: string }): Promise<OmdbMovie> };
+  repository: { createEntry(args: { type: string; data: MovieRating }): Promise<RatingEntry> };
+}
+
+// ─── The type ───────────────────────────────────────────────────────────────
 
 /**
  * A film in the knowledge graph. Identity is `imdbId`.
@@ -8,8 +82,8 @@ import type { MovieRating } from "../types/movie";
  * `Movie` as a type, hydrates an in-scope object's fields onto `this`, and gives
  * it `neighbors()` for free. Each async method below is an affordance callable on
  * that object — `movie.streaming({ country: "us" })` — with no `ctx`/`self`
- * plumbing: `this` is the movie, `this.gateway` reaches the APIs the pack brings
- * in (where the credentials live, server-side).
+ * plumbing: `this` is the movie, `this.api` reaches the APIs the pack brings in
+ * (where the credentials live, server-side).
  */
 export class Movie extends Entity {
   /** IMDb id — the identity key (e.g. "tt0114367"). */
@@ -20,19 +94,24 @@ export class Movie extends Entity {
   director?: string;
   runtimeMinutes?: string;
 
+  /** The injected gateway, typed to the ops this pack uses. */
+  private get api(): MovieGateway {
+    return this.gateway as unknown as MovieGateway;
+  }
+
   /**
    * Where this movie is streaming in a country (ISO-3166 alpha-2, lowercase —
    * e.g. 'us', 'au').
    */
-  async streaming(args: { country: string }): Promise<unknown> {
-    return this.gateway.streamingAvailability.getShow({ id: this.imdbId, country: args.country });
+  async streaming(args: { country: string }): Promise<StreamingShow> {
+    return this.api.streamingAvailability.getShow({ id: this.imdbId, country: args.country });
   }
 
   /**
    * Fresh OMDb metadata (full plot, ratings, runtime) for this movie.
    */
-  async details(): Promise<unknown> {
-    return this.gateway.omdb.getMovie({ i: this.imdbId, plot: "full" });
+  async details(): Promise<OmdbMovie> {
+    return this.api.omdb.getMovie({ i: this.imdbId, plot: "full" });
   }
 
   /**
@@ -41,7 +120,7 @@ export class Movie extends Entity {
    * upserts by imdbId, so a re-rate updates in place. The same gateway op the
    * card's star widget calls.
    */
-  async rate(args: { rating: number; notes?: string; watchedOn?: string }): Promise<unknown> {
+  async rate(args: { rating: number; notes?: string; watchedOn?: string }): Promise<RatingEntry> {
     const data: MovieRating = {
       imdbId: this.imdbId,
       title: this.title,
@@ -49,6 +128,6 @@ export class Movie extends Entity {
       notes: args.notes,
       watchedOn: args.watchedOn,
     };
-    return this.gateway.repository.createEntry({ type: "MovieRating", data });
+    return this.api.repository.createEntry({ type: "MovieRating", data });
   }
 }

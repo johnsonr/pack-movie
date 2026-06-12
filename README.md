@@ -85,28 +85,45 @@ become the input/output JSON Schema.
 
 ```ts
 import { Entity } from "@embabel/runtime-types";
-import type { MovieRating } from "../types/movie";
+
+// Data shapes the methods read/write, declared alongside the type that uses them.
+interface StreamingShow { streamingOptions?: Record<string, unknown[]> }
+interface RatingEntry { id: string }
+interface MovieRating { imdbId: string; title?: string; rating: number; notes?: string; watchedOn?: string }
+
+// The gateway ops this type calls, typed. Until `embabel-pack sync` generates the
+// host's `GatewayContext`, the pack types the slice it uses and reads it through
+// `this.api`, so bodies and return types are fully typed — no `unknown`.
+interface MovieGateway {
+  streamingAvailability: { getShow(args: { id: string; country: string }): Promise<StreamingShow> };
+  repository: { createEntry(args: { type: string; data: MovieRating }): Promise<RatingEntry> };
+}
 
 export class Movie extends Entity {
   imdbId!: string;
   title?: string;
 
+  private get api(): MovieGateway {
+    return this.gateway as unknown as MovieGateway;
+  }
+
   /** Where this movie is streaming in a country (ISO-3166 alpha-2, lowercase). */
-  async streaming(args: { country: string }): Promise<unknown> {
-    return this.gateway.streamingAvailability.getShow({ id: this.imdbId, country: args.country });
+  async streaming(args: { country: string }): Promise<StreamingShow> {
+    return this.api.streamingAvailability.getShow({ id: this.imdbId, country: args.country });
   }
 
   /** Record the user's rating (1–10); createEntry auto-emits (User)-[:RATED]->(MovieRating). */
-  async rate(args: { rating: number; notes?: string; watchedOn?: string }): Promise<unknown> {
+  async rate(args: { rating: number; notes?: string; watchedOn?: string }): Promise<RatingEntry> {
     const data: MovieRating = { imdbId: this.imdbId, title: this.title, ...args };
-    return this.gateway.repository.createEntry({ type: "MovieRating", data });
+    return this.api.repository.createEntry({ type: "MovieRating", data });
   }
 }
 ```
 
 Extending `Entity` also gives `movie.neighbors({ hops })` for free — graph
-navigation with no per-type code. `MovieRating` has no behaviour of its own, so
-it stays a plain `interface` in `src/types/movie.ts`.
+navigation (typed `NeighborNode[]`) with no per-type code. The whole type — its
+fields, methods, result shapes (`StreamingShow`, `OmdbMovie`, `RatingEntry`), and
+the `MovieRating` record it writes — lives in the single file `src/api/movie.ts`.
 
 **Where it runs.** A method body runs **in the pack sandbox**; the gateway ops it
 calls (`this.gateway.streamingAvailability.*`, `this.gateway.omdb.*`,
