@@ -87,11 +87,21 @@
         "more like this". Each suggestion resolves to its imdbId so it dedupes against already-rated
         films; exclude everything the user has seen with a NOT EXISTS over their MovieRating imdbIds,
         and rank by how many loved films point at each candidate (`count(*) DESC`).
-    # NOTE: a SUGGESTS join (fan-OUT off the MovieTasteSummary node — "recommend from my whole taste") would go
-    # HERE under Movie (the target type) with anchorLabel MovieTasteSummary, exactly as SIMILAR_TO is declared
-    # under Movie with anchorLabel MovieRating. It is deliberately NOT declared: chaining a lazy join off a
-    # TRANSIENT virtual node isn't stitched by the engine yet (both halves materialize in a rolled-back pre-pass).
-    # It becomes possible once the summary node is persisted. See views/movie-recommendations.yml + pack-spec.
+    # SUGGESTS: fan-OUT off the TASTE SUMMARY — films matching your taste AS A WHOLE, not similars to any one
+    # rating. Declared HERE under Movie (the TARGET type) with anchorLabel MovieTasteSummary, like SIMILAR_TO is
+    # under Movie with anchorLabel MovieRating. Two-stage virtual chain: HAS_MOVIE_TASTE_SUMMARY (fan-IN)
+    # materializes the MovieTasteSummary node, then SUGGESTS (fan-OUT) generates films off its `summary`:
+    #   MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)-[:SUGGESTS]->(m:Movie)
+    #   WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+    #   RETURN DISTINCT m
+    - anchorLabel: MovieTasteSummary
+      relationship: SUGGESTS
+      keyField: summary            # the MovieTasteSummary.summary prose is the generator's input
+      recordKeyField: fromTaste    # tasteBasedPicks echoes the anchor key here
+      producer: tasteBasedPicks
+      description: >-
+        Films that match your OVERALL taste, generated from your taste summary rather than from any one rating.
+        A good "surprise me based on everything I like" list; exclude films you've already rated.
 
 - name: StreamingService
   userAnchor: false

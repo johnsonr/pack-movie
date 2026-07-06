@@ -128,7 +128,63 @@
     kind: ttl
     seconds: 604800                 # 7 days — a weekly-refreshed summary
 
-# NOTE: a `tasteBasedPicks` generative producer (recommend from the WHOLE taste — anchored on the
-# MovieTasteSummary node, its `summary` prose as the generator input) is intentionally not declared. It works as
-# a producer, but the VIEW that would use it chains a lazy fan-OUT off a TRANSIENT virtual node, which the engine
-# does not stitch yet (see views/movie-recommendations.yml). Add it once the summary node is persisted.
+# tasteBasedPicks: recommendations from your TASTE as a whole, not from any one film. A `generative` producer
+# (exactly like similarMovies) but anchored on the MovieTasteSummary node — its `summary` PROSE is the generator
+# input, so the chain is fan-IN (ratings → one summary node) then fan-OUT (summary → many films). Films matching
+# a described taste are world knowledge → volatility static (parametric LLM allowed). Each pick is resolved onto
+# the Movie spine via OMDb so it dedupes against already-rated films, same as similarMovies.
+- name: tasteBasedPicks
+  kind: generative
+  edgeType: SUGGESTS
+  identityField: imdbId
+  anchorKeyField: fromTaste        # echoes the summary key so every pick links back to the one MovieTasteSummary
+  nameField: title
+  volatility: static
+  confidenceFloor: 0.3
+  defaultWant: 25
+  generator:
+    kind: llm
+    prompt: |
+      You are a film curator. Below is a prose description of one person's taste in film. Recommend films they
+      would very likely LOVE because they match this taste — the same directors, genres, eras, countries, moods,
+      and sensibility described. Prefer non-obvious picks over the most famous titles.
+
+      Their taste:
+      {% for a in anchors %}{{ a.title }}
+      {% endfor %}
+      {% if exclude %}
+      Do NOT suggest any of these (already known, seen, or already suggested — ignore any that look like a
+      paragraph rather than a film title):
+      {% for e in exclude %}- {{ e }}
+      {% endfor %}
+      {% endif %}
+      {% if constraints %}
+      Only suggest films that satisfy ALL of these constraints (skip any that don't):
+      {% for c in constraints %}- {{ c }}
+      {% endfor %}
+      {% endif %}
+      Rules:
+      - Suggest up to {{ want }} films in total.
+      - Set `sourceIndex` to 1 (there is a single taste description).
+      - `title` is the film's exact, well-known title.
+      - `confidence` is 0.0-1.0: how sure you are the film exists AND genuinely fits this taste. Be honest;
+        don't invent films to reach the count.
+  resolveVia:
+    name: resolveTitle
+    kind: remote
+    operation: getMovie
+    args:
+      t: "{keys}"
+    keyTemplate: "{key}"
+    records: "$"
+    project:
+      imdbId: imdbID
+      title: Title
+      year: Year
+      genre: Genre
+      country: Country
+      director: Director
+      runtimeMinutes: Runtime
+  cache:
+    kind: ttl
+    seconds: 604800                 # weekly — matches the summary's refresh cadence

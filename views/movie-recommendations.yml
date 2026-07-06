@@ -59,8 +59,14 @@
     MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
     RETURN ts
 
-# A "recommend from my WHOLE taste" view (chaining SUGGESTS off the MovieTasteSummary node) is NOT shipped:
-# it needs a two-stage virtual chain where the anchor of the second hop is itself a TRANSIENT virtual node, and
-# the engine currently materializes those stages in a throwaway pre-pass that rolls back before the final read —
-# so both halves build but don't stitch. It would work once the summary node is PERSISTED (committed + weekly-
-# refreshed), the way identity bridges chain today. Tracked as a follow-up; see pack-spec's fan-in section.
+# Recommendations from your taste AS A WHOLE — a two-stage virtual chain: the MovieTasteSummary node
+# materializes (fan-IN over your ratings), then SUGGESTS generates films off its prose (fan-OUT). Unlike
+# MovieRecommendations (similars to individual loved films), these are picked to match the overall through-lines.
+- name: TasteBasedRecommendations
+  description: Films picked to match your overall taste, not just one film you loved.
+  outputLabel: Movie
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
+    MATCH (ts)-[:SUGGESTS]->(m:Movie)
+    WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+    RETURN DISTINCT m
