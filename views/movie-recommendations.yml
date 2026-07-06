@@ -1,0 +1,50 @@
+# Named Cypher VIEWS (no JavaScript) — they appear in the Cypher console's Views list and run as
+# `MATCH (v:<Name>) RETURN v`, returning Movie nodes (entity cards). The SIMILAR_TO / AVAILABLE_ON
+# edges are virtual: they materialize on demand when the view body runs, inside the scoped, rolled-back
+# read. `(me:AssistantUser)` is NAMED so the scope rewriter binds it to the current user (private
+# MovieRating never leaks across users). Views that need JavaScript (an LLM taste summary, per-service
+# tagging) stay as lenses — see ../lenses/.
+
+# Films similar to ones you rated highly, that you haven't already seen.
+- name: MovieRecommendations
+  description: Films like the ones you've loved, that you haven't already seen.
+  outputLabel: Movie
+  cypher: |
+    MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+    RETURN DISTINCT m
+
+# Recommendations you can actually stream now, on one of your own services (SUBSCRIBES_TO).
+- name: StreamableRecommendations
+  description: Recommended films you can stream now on your services.
+  outputLabel: Movie
+  cypher: |
+    MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+      AND EXISTS { MATCH (m)-[:AVAILABLE_ON]->(s:StreamingService)
+                   WHERE EXISTS { (me)-[:SUBSCRIBES_TO]->(:UserStreamingSubscription {serviceId: s.serviceId}) } }
+    RETURN DISTINCT m
+
+# The anti-recommendation, for fun: films like the ones you rated LOW — what you'd probably also hate.
+# Same SIMILAR_TO edge, anchored on your DISLIKED films (rating <= 4) instead of your loved ones.
+- name: MoviesYoullProbablyHate
+  description: Films like the ones you rated poorly — steer clear.
+  outputLabel: Movie
+  cypher: |
+    MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating <= 4
+    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+    RETURN DISTINCT m
+
+# Film-noir picks, drawn from your taste (similars to your loved films, kept if the genre matches).
+- name: NoirRecommendations
+  description: Film-noir picks based on what you've loved.
+  outputLabel: Movie
+  cypher: |
+    MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+      AND m.genre CONTAINS 'Noir'
+    RETURN DISTINCT m

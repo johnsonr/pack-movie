@@ -1,0 +1,37 @@
+# View 3 — a summary of your film taste, derived from your ratings (NOT pure Cypher: it reads the
+# ratings, then hands them to the LLM via gateway.ai.complete for the editorial). Uses your loved
+# (>=8) and disliked (<=4) films so the summary captures what you gravitate to AND avoid.
+id: taste-summary
+name: Your Film Taste
+description: A short read on what you love and avoid, drawn from your ratings.
+spec:
+  kind: cypherscript
+  script: |
+    const loved = await gateway.kg.query({
+      cypher: `MATCH (me:AssistantUser)-[:RATED]->(r:MovieRating) WHERE r.rating >= 8
+               RETURN r.title AS title, r.rating AS rating ORDER BY r.rating DESC, r.title ASC LIMIT 60`,
+      params: JSON.stringify({}),
+    });
+    const disliked = await gateway.kg.query({
+      cypher: `MATCH (me:AssistantUser)-[:RATED]->(r:MovieRating) WHERE r.rating <= 4
+               RETURN r.title AS title, r.rating AS rating ORDER BY r.rating ASC, r.title ASC LIMIT 30`,
+      params: JSON.stringify({}),
+    });
+    const fmt = (xs) => (xs || []).map((x) => `${x.title} (${x.rating}/10)`).join("\n");
+    const prompt = [
+      "You are a film critic. In 3-4 sentences, characterise this viewer's taste in film —",
+      "the directors, eras, moods, and genres they gravitate to, and what they avoid. Be specific and",
+      "concrete; name patterns, not individual films. Write in the second person ('You lean toward…').",
+      "",
+      "FILMS THEY LOVED (8-10/10):",
+      fmt(loved),
+      "",
+      "FILMS THEY DISLIKED (1-4/10):",
+      fmt(disliked),
+    ].join("\n");
+    const summary = await gateway.ai.complete({ prompt });
+    await gateway.lens.present({ content: JSON.stringify({
+      kind: "text",
+      title: "Your film taste",
+      markdown: (summary || "").toString(),
+    }) });

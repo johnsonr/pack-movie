@@ -24,3 +24,5 @@ exports:
   - roger
   - Movie
   - MovieRating
+  - StreamingService
+  - UserStreamingSubscription

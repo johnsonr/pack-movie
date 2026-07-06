@@ -56,6 +56,81 @@
       genre: Genre
       director: Director
       runtimeMinutes: Runtime
+  # SIMILAR_TO: films like one the user rated, sourced from the assistant's own film knowledge
+  # (see producers/movie.yml — a `knowledge` producer, not an API). Anchored on a rated film's
+  # TITLE; each suggestion is resolved to its imdbId so it canonicalizes onto this Movie spine and
+  # dedupes against films already rated. It is a LAZY query-time join (NOT persist:true — that flag
+  # marks an eager enrichment join, excluded from the query-time registry): the SIMILAR_TO edges are
+  # materialized transiently when the query traverses them and rolled back after, exactly like
+  # ResearchPaper/GitHubIssue. (Durable caching of static similarity would use the enrichment path —
+  # a separate follow-up.) Recommend unseen films with:
+  #   MATCH (u:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+  #   MATCH (rt)-[:SIMILAR_TO]->(rec:Movie)
+  #   WHERE NOT EXISTS { MATCH (u)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = rec.imdbId }
+  #   RETURN rec.title, count(*) AS overlap ORDER BY overlap DESC LIMIT 10
+  virtualJoins:
+    - anchorLabel: MovieRating
+      relationship: SIMILAR_TO
+      keyField: title              # MovieRating.title — the film the user rated
+      recordKeyField: similarTo    # the knowledge producer echoes the anchor title here
+      producer: similarMovies
+      description: >-
+        Films similar to one the user rated, from the assistant's own film knowledge (not an API).
+        Ratings are on a 1–10 scale, so anchor recommendations on the films the user LOVED, not merely
+        watched: filter `WHERE rt.rating >= 8` (8+/10) — a low-rated film is a negative signal, not a
+        "more like this". Each suggestion resolves to its imdbId so it dedupes against already-rated
+        films; exclude everything the user has seen with a NOT EXISTS over their MovieRating imdbIds,
+        and rank by how many loved films point at each candidate (`count(*) DESC`).
+
+- name: StreamingService
+  userAnchor: false
+  description: |
+    A streaming service (Netflix, Stan, …) a Movie can be watched on in the user's country.
+    VIRTUAL — fetched on demand from the Streaming Availability API when a query traverses
+    AVAILABLE_ON; never stored. Use it to filter recommendations to films the user can actually
+    stream, and to tell them WHERE:
+      MATCH (m:Movie)-[:AVAILABLE_ON]->(s:StreamingService) RETURN m.title, collect(s.serviceName)
+  properties:
+    serviceId:
+      identity: true
+      description: "Streaming service id, e.g. 'netflix'. Identity key."
+    serviceName: "Display name of the service, e.g. 'Netflix'."
+    watchLink: "Deep link to the title on the service."
+    offerType: "How it's available: subscription / free / rent / buy."
+  # AVAILABLE_ON: the streaming options for a Movie in the user's country (producer streamingByImdb).
+  # Anchored on Movie.imdbId. A plain MATCH (not OPTIONAL) filters to films that ARE streamable —
+  # films with no option in-country simply drop out. Chains after SIMILAR_TO in one query:
+  #   MATCH (rt:MovieRating) WHERE rt.rating >= 8
+  #   MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+  #   WHERE NOT EXISTS { (:MovieRating {imdbId: m.imdbId}) }
+  #   MATCH (m)-[:AVAILABLE_ON]->(s:StreamingService)
+  #   RETURN m.title, collect(DISTINCT s.serviceName) AS services
+  virtualJoins:
+    - anchorLabel: Movie
+      relationship: AVAILABLE_ON
+      keyField: imdbId            # Movie.imdbId
+      recordKeyField: imdbId      # stamped onto each option by the producer's echoKeyAs
+      producer: streamingByImdb
+      description: >-
+        Streaming services where this Movie can be watched in the user's country. Only films with at
+        least one option appear, so a plain MATCH filters recommendations to what the user can stream.
+
+- name: UserStreamingSubscription
+  description: |
+    A streaming service the CURRENT USER subscribes to — the per-user half of the streaming catalog.
+    Seeded from pack reference data (reference/streaming-services.yml). The userAnchor gives
+    (:AssistantUser)-[:SUBSCRIBES_TO]->(:UserStreamingSubscription); filter recommendations to what the
+    user can actually watch by intersecting a Movie's AVAILABLE_ON services on serviceId:
+      MATCH (m:Movie)-[:AVAILABLE_ON]->(s:StreamingService)
+      WHERE EXISTS { (:AssistantUser)-[:SUBSCRIBES_TO]->(:UserStreamingSubscription {serviceId: s.serviceId}) }
+  userAnchor:
+    predicate: SUBSCRIBES_TO
+    direction: from-user
+  properties:
+    serviceId:
+      identity: true
+      description: "Streaming service id (matches StreamingService.serviceId / the API's service.id), e.g. 'netflix'."
+    serviceName: "Display name, e.g. 'Netflix'."
 
 - name: MovieRating
   description: |

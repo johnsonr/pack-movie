@@ -1,0 +1,97 @@
+# Virtual-join producers for the movie pack (see specs/VIRTUAL_CYPHER.md and
+# specs/RESUMABLE_PRODUCERS_PLAN.md in the assistant repo).
+#
+# similarMovies: a KNOWLEDGE producer (kind: knowledge) — the SIMILAR_TO edge is sourced from the
+# assistant's own film knowledge, NOT an API (OMDb has no "similar" endpoint). Film similarity is
+# STATIC world knowledge, so parametric memory is the right source and the edge is persisted after
+# first fetch. It is RESUMABLE: the engine can ask for MORE similar films (excluding ones already
+# suggested or already rated) until it has enough unseen recommendations — the generator model.
+#
+# The model is NOT pinned here (a pack must never hardcode a model); the backend uses the ops-controlled
+# InfrastructureProperties.knowledgeEdgeLlm. This spec carries only source-agnostic knowledge config.
+#
+# resolveVia canonicalizes each LLM-emitted title onto the Movie spine: omdb.getMovie(t=title) → imdbID,
+# projected to imdbId. A title OMDb can't resolve is dropped (you can't recommend a film you can't
+# identify), which also keeps the anti-join against already-rated imdbIds correct.
+
+- name: similarMovies
+  kind: generative         # GENERATES the edge (resumably) rather than reading it from a store
+  edgeType: SIMILAR_TO
+  identityField: imdbId
+  anchorKeyField: similarTo
+  nameField: title         # the human name the generator emits (a film title), pre-resolution
+  volatility: static
+  confidenceFloor: 0.3
+  defaultWant: 25          # a view has no LIMIT; keep generating to ~25 survivors (most films get filtered out)
+  # The generator is an LLM; the prompt is PACK-AUTHORED (the host generative backend is domain-agnostic —
+  # it ships no film prompt). Rendered with anchors/exclude/want/round/constraints (pushed-down predicates).
+  generator:
+    kind: llm
+    prompt: |
+      You are a film-knowledge oracle. For each numbered film below, name other films a fan of it
+      would very likely also enjoy — genuinely similar in style, theme, director, or era.
+
+      Films:
+      {% for a in anchors %}{{ a.n }}. {{ a.title }}
+      {% endfor %}
+      {% if exclude %}
+      Do NOT suggest any of these already-known films (the user has seen them, or you already suggested them):
+      {% for e in exclude %}- {{ e }}
+      {% endfor %}
+      {% endif %}
+      {% if constraints %}
+      Additionally, only suggest films that satisfy ALL of these constraints (skip any that don't):
+      {% for c in constraints %}- {{ c }}
+      {% endfor %}
+      {% endif %}
+      Rules:
+      - Suggest up to {{ want }} films in total across all the numbered films.
+      - Set `sourceIndex` to the number of the film each suggestion is similar to.
+      - `title` is the suggested film's exact, well-known title.
+      - `confidence` is 0.0-1.0: how sure you are the film exists AND is genuinely similar. Be honest —
+        lower it for obscure or tenuous picks; do not invent films to reach the count.
+      - Never repeat a film from the exclude list or from your own suggestions.
+  resolveVia:
+    name: resolveTitle
+    kind: remote
+    operation: getMovie            # bare gateway op-id (like openalex's `searchWorks`), NOT `omdb.getMovie`
+    args:
+      t: "{keys}"
+    keyTemplate: "{key}"
+    records: "$"
+    project:                # fill Movie's FULL property surface, not just identity
+      imdbId: imdbID
+      title: Title
+      year: Year
+      genre: Genre
+      director: Director
+      runtimeMinutes: Runtime
+  cache:
+    kind: ttl
+    seconds: 2592000        # 30 days — static fact
+
+# streamingByImdb: where a Movie can be streamed IN THE USER'S COUNTRY — a plain remote producer over
+# the Streaming Availability API (getShow by imdbId + country). Powers the AVAILABLE_ON join, which
+# filters recommendations to films the user can actually watch. echoKeyAs stamps the queried imdbId onto
+# each option so AVAILABLE_ON links back to its Movie; per-key fetch (one getShow per film) follows.
+#
+# COUNTRY is 'au' here (the parked personalization follow-up, like multi-user scoping): it should come
+# from the user's profile, not be pinned in a shared pack. The response is a map keyed by country, and
+# we requested one, so `$.streamingOptions.au[*]` is that country's option array.
+- name: streamingByImdb
+  kind: remote
+  operation: getShow
+  args:
+    id: "{keys}"
+    country: "au"
+  keyTemplate: "{key}"
+  echoKeyAs: imdbId                 # stamp the queried imdbId so AVAILABLE_ON matches Movie.imdbId
+  records: "$.streamingOptions.au[*]"
+  project:
+    serviceId: "service.id"
+    serviceName: "service.name"
+    watchLink: "link"
+    offerType: "type"
+  cache:
+    kind: ttl
+    seconds: 86400                  # 1 day — availability drifts, but not minutely
