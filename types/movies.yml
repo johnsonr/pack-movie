@@ -37,6 +37,7 @@
       type: int
       description: "Release year, e.g. 1994. Declared int so queries can range/order on it; OMDb's string is coerced."
     genre: "Comma-separated genres as returned by OMDb, e.g. 'Crime, Drama'."
+    country: "Comma-separated production countries from OMDb, e.g. 'France, Italy'. Use CONTAINS to filter (a film can list several)."
     director: "Primary director(s) as returned by OMDb."
     runtimeMinutes:
       type: int
@@ -58,6 +59,7 @@
       title: Title
       year: Year
       genre: Genre
+      country: Country
       director: Director
       runtimeMinutes: Runtime
   # SIMILAR_TO: films like one the user rated, sourced from the assistant's own film knowledge
@@ -85,6 +87,11 @@
         "more like this". Each suggestion resolves to its imdbId so it dedupes against already-rated
         films; exclude everything the user has seen with a NOT EXISTS over their MovieRating imdbIds,
         and rank by how many loved films point at each candidate (`count(*) DESC`).
+    # NOTE: a SUGGESTS join (fan-OUT off the MovieTasteSummary node — "recommend from my whole taste") would go
+    # HERE under Movie (the target type) with anchorLabel MovieTasteSummary, exactly as SIMILAR_TO is declared
+    # under Movie with anchorLabel MovieRating. It is deliberately NOT declared: chaining a lazy join off a
+    # TRANSIENT virtual node isn't stitched by the engine yet (both halves materialize in a rolled-back pre-pass).
+    # It becomes possible once the summary node is persisted. See views/movie-recommendations.yml + pack-spec.
 
 - name: StreamingService
   userAnchor: false
@@ -135,6 +142,39 @@
       identity: true
       description: "Streaming service id (matches StreamingService.serviceId / the API's service.id), e.g. 'netflix'."
     serviceName: "Display name, e.g. 'Netflix'."
+
+- name: MovieTasteSummary
+  # Shared/virtual, not user-OWNED in the persistence sense: like Movie/StreamingService it is materialized on
+  # demand and reached FROM the scoped `(me:AssistantUser)`, so it needs no from-user anchor of its own.
+  # Movie-prefixed label + edge so this pack's fan-in node can't collide with another pack's summary type.
+  userAnchor: false
+  description: |
+    A one-per-user synthesis of the user's film taste, distilled from their MovieRatings. VIRTUAL — there is no
+    stored MovieTasteSummary; it is materialized on demand by aggregating (fan-IN) the user's ratings into ~100
+    words (producer `movieTasteSummary`, cached weekly). Reach it from the user and read `ts.summary`:
+      MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary) RETURN ts.summary
+  properties:
+    userId:
+      identity: true
+      description: "The user this summary is for — the identity key, so there is exactly ONE MovieTasteSummary per user."
+    summary: "The ~100-word synthesis of the user's film taste: directors, genres, eras, countries, and moods they love and avoid."
+    count:
+      type: int
+      description: "How many ratings the summary was distilled from."
+    generatedAt: "ISO-8601 timestamp the summary was generated (materialization time)."
+  # HAS_MOVIE_TASTE_SUMMARY: the fan-IN edge. Anchored on the user; the `movieTasteSummary` producer gathers the
+  # user's MovieRatings and reduces them to one node via the `synthesize` LLM aggregation. keyField is the user's
+  # `id` (== the userId/workspaceId scope key), echoed by the producer into `userId` so the one node links back.
+  virtualJoins:
+    - anchorLabel: AssistantUser
+      relationship: HAS_MOVIE_TASTE_SUMMARY
+      keyField: id
+      recordKeyField: anchorKey
+      producer: movieTasteSummary
+      description: >-
+        The user's film-taste summary, synthesized from every MovieRating they've recorded. One node per user —
+        ask for `ts.summary`. Materialized on demand and cached weekly, so it is cheap to read repeatedly. Use it
+        to answer "what's my taste in film?" / "summarize what I like" without hand-scanning the ratings.
 
 - name: MovieRating
   description: |

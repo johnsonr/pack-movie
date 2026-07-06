@@ -1,9 +1,10 @@
 # Named Cypher VIEWS (no JavaScript) — they appear in the Cypher console's Views list and run as
-# `MATCH (v:<Name>) RETURN v`, returning Movie nodes (entity cards). The SIMILAR_TO / AVAILABLE_ON
-# edges are virtual: they materialize on demand when the view body runs, inside the scoped, rolled-back
-# read. `(me:AssistantUser)` is NAMED so the scope rewriter binds it to the current user (private
-# MovieRating never leaks across users). Views that need JavaScript (an LLM taste summary, per-service
-# tagging) stay as lenses — see ../lenses/.
+# `MATCH (v:<Name>) RETURN v`, returning entity-card nodes. The SIMILAR_TO / AVAILABLE_ON /
+# HAS_MOVIE_TASTE_SUMMARY edges are virtual: they materialize on demand when the view body runs, inside the
+# scoped, rolled-back read. `(me:AssistantUser)` is NAMED so the scope rewriter binds it to the current user
+# (private MovieRating never leaks across users). The taste summary USED to need a JS lens (an inline LLM call);
+# now that it is the `MovieTasteSummary` virtual NODE, the LLM reduction happens in the producer and this stays
+# pure Cypher too (see MyFilmTaste below). Per-service tagging still needs a lens — see ../lenses/.
 
 # Films similar to ones you rated highly, that you haven't already seen.
 - name: MovieRecommendations
@@ -48,3 +49,18 @@
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
       AND m.genre CONTAINS 'Noir'
     RETURN DISTINCT m
+
+# Your film taste in ~100 words — the fan-IN MovieTasteSummary node, synthesized from every rating you've
+# recorded and cached weekly. Pure Cypher now that the summary is a node: no JS lens, just traverse the edge.
+- name: MyFilmTaste
+  description: A ~100-word read on your taste in film, distilled from your ratings.
+  outputLabel: MovieTasteSummary
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
+    RETURN ts
+
+# A "recommend from my WHOLE taste" view (chaining SUGGESTS off the MovieTasteSummary node) is NOT shipped:
+# it needs a two-stage virtual chain where the anchor of the second hop is itself a TRANSIENT virtual node, and
+# the engine currently materializes those stages in a throwaway pre-pass that rolls back before the final read —
+# so both halves build but don't stitch. It would work once the summary node is PERSISTED (committed + weekly-
+# refreshed), the way identity bridges chain today. Tracked as a follow-up; see pack-spec's fan-in section.

@@ -64,6 +64,7 @@
       title: Title
       year: Year
       genre: Genre
+      country: Country
       director: Director
       runtimeMinutes: Runtime
   cache:
@@ -95,3 +96,39 @@
   cache:
     kind: ttl
     seconds: 86400                  # 1 day — availability drifts, but not minutely
+
+# movieTasteSummary: the fan-IN producer behind HAS_MOVIE_TASTE_SUMMARY. The mirror of similarMovies — where
+# that GENERATES many films off one rating, this GATHERS all the user's MovieRatings and REDUCES them to ONE
+# MovieTasteSummary node. It reuses the `synthesize` LLM aggregation (the same fan-in function a query can call
+# inline), so there's one implementation of "LLM-reduce a group of text". Domain-free host: the traversal,
+# the per-rating text, and the reduction goal are ALL here in the pack (no model pinned — the aggregation
+# uses the ops-controlled InfrastructureProperties.aggregationLlm). Cached weekly, so the summary refreshes
+# once every 7 days per user rather than on every read. Movie-prefixed name/edge to avoid cross-pack collision.
+- name: movieTasteSummary
+  kind: aggregate
+  edgeType: HAS_MOVIE_TASTE_SUMMARY
+  identityField: userId           # one summary per user (MERGE on the workspace id folds the identity spellings)
+  anchorKeyField: anchorKey       # the join's recordKeyField — echoes each received anchor-identity spelling so
+                                  # every email of (me:AssistantUser) links to the single node
+  collect:
+    anchorLabel: AssistantUser
+    via: RATED
+    targetLabel: MovieRating
+    # One text item per rating. ALL ratings count — a 2/10 is taste signal (what they avoid), not noise.
+    text: "{{ title }} — rated {{ rating }}/10{% if notes %} · {{ notes }}{% endif %}"
+  reduce:
+    using: synthesize             # the goal-directed LLM fan-in aggregation
+    into: summary
+    args:
+      - >-
+        In about 100 words and the second person ("you"), sum up this person's taste in film from their ratings
+        (10 = loved, 1 = hated): the directors, genres, eras, countries, and moods they gravitate toward, and
+        what they avoid. Be concrete and specific — name the through-lines. No preamble; just the summary.
+  cache:
+    kind: ttl
+    seconds: 604800                 # 7 days — a weekly-refreshed summary
+
+# NOTE: a `tasteBasedPicks` generative producer (recommend from the WHOLE taste — anchored on the
+# MovieTasteSummary node, its `summary` prose as the generator input) is intentionally not declared. It works as
+# a producer, but the VIEW that would use it chains a lazy fan-OUT off a TRANSIENT virtual node, which the engine
+# does not stitch yet (see views/movie-recommendations.yml). Add it once the summary node is persisted.
