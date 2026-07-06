@@ -33,10 +33,14 @@
       identity: true
       description: "IMDb id, e.g. 'tt0110912' for Pulp Fiction. The identity key — the store MERGEs on it (deterministic, workspace-scoped id), so the same film is one Movie node however many times it's referenced."
     title: "Display title, e.g. 'Pulp Fiction'."
-    year: "Release year, four-digit string."
+    year:
+      type: int
+      description: "Release year, e.g. 1994. Declared int so queries can range/order on it; OMDb's string is coerced."
     genre: "Comma-separated genres as returned by OMDb, e.g. 'Crime, Drama'."
     director: "Primary director(s) as returned by OMDb."
-    runtimeMinutes: "Runtime in minutes, as a string (OMDb returns it as 'NNN min'; strip the suffix when storing)."
+    runtimeMinutes:
+      type: int
+      description: "Runtime in minutes, e.g. 175. Declared int so `WHERE m.runtimeMinutes > 120` works; OMDb returns 'NNN min' and the host coerces it to the number on materialization."
   # Methods on a Movie held in working state (`movie.details({})`,
   # `movie.streaming({ country })`) are authored in TypeScript under `src/api/`
   # and COMPILED — they are not declared here. See `src/api/movie.ts` and the
