@@ -223,3 +223,42 @@
       description: "Score from 1 (terrible) to 10 (masterpiece). Whole numbers only."
     notes: "Optional one-line reaction from the user, in their own words."
     watchedOn: "Optional ISO-8601 date the user watched the movie."
+
+- name: MovieReview
+  # Shared/virtual like Movie: materialized on demand, reached FROM a Movie. Not user-owned.
+  userAnchor: false
+  description: |
+    An INDIVIDUAL published review of a film — one node PER review (many per film): its url, headline, the
+    outlet, the critic, a representative excerpt, and a normalized score. VIRTUAL: found on demand by an LLM
+    WITH WEB SEARCH (producer `movieReviews`), never stored. A PROMPTED, TOOL-GROUNDED edge that returns this
+    type directly — the LLM produces these fields (no OMDb resolve). Reach it from a Movie:
+      MATCH (m:Movie)-[:HAS_REVIEW]->(r:MovieReview) RETURN r.title, r.url, r.publication, r.score ORDER BY r.score DESC
+  properties:
+    url:
+      identity: true
+      description: "Link to the review — the identity key (each distinct review is its own node)."
+    title: "The review's headline / title."
+    publication: "The outlet the review appeared in, e.g. 'The Guardian', 'RogerEbert.com'."
+    author: "The critic's name, if known."
+    excerpt: "A representative sentence or two from the review."
+    reviewDate: "ISO-8601 date the review was published, if shown — nullable (many reviews carry no date)."
+    sentiment: "Overall sentiment of the review: 'positive', 'mixed', or 'negative'."
+    score:
+      type: number
+      description: "The review's score normalized to 0–10 if the review gives a numeric one; often absent (stars/letters live in originalScore)."
+    originalScore: "The rating exactly as the review gives it, e.g. '4/5', 'A-', '★★★★' — kept because normalizing to score loses the native scale."
+    verdict: "A one-sentence takeaway of the review's overall verdict."
+    movieTitle: "The film this review is of — links the review back to its Movie (matches Movie.title)."
+  # HAS_REVIEW: declared under MovieReview (the type it PRODUCES) with anchorLabel Movie. Anchored on the film's
+  # title so the LLM has something to web-search; each review links back by movieTitle. MANY reviews per film —
+  # each keyed by its url. A two-stage chain works: (rt)-[:SIMILAR_TO]->(m:Movie)-[:HAS_REVIEW]->(r).
+  virtualJoins:
+    - anchorLabel: Movie
+      relationship: HAS_REVIEW
+      keyField: title
+      recordKeyField: movieTitle
+      producer: movieReviews
+      description: >-
+        Individual web-found reviews of the film (one node per review — url, headline, outlet, critic, excerpt,
+        score), gathered by an LLM with web search and cached. Many per film; ORDER BY r.score DESC for the best.
+        Reach it from a recommendation: (m:Movie)-[:HAS_REVIEW]->(r:MovieReview).

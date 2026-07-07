@@ -27,3 +27,4 @@ exports:
   - StreamingService
   - UserStreamingSubscription
   - MovieTasteSummary
+  - MovieReview

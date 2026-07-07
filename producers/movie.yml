@@ -194,3 +194,43 @@
   cache:
     kind: ttl
     seconds: 604800                 # weekly — matches the summary's refresh cadence
+
+# movieReviews: a PROMPTED, WEB-GROUNDED edge that returns the MovieReview type. The mirror of similarMovies as
+# an LLM producer, with two additions: `tools: [web]` (so it looks up REAL reviews, not stale parametric memory
+# — which also relaxes the volatility gate: `slow` is allowed BECAUSE it's tool-grounded), and NO resolveVia
+# (the LLM emits the target type's fields directly — url/title/publication/… — instead of a name for OMDb to
+# resolve). MANY reviews per film, each keyed by its url; the film title is the search key. Cached weekly.
+- name: movieReviews
+  kind: generative
+  edgeType: HAS_REVIEW
+  identityField: url              # each review is a distinct node keyed by its link
+  nameField: url                  # keyed/deduped by url (typed mode)
+  anchorKeyField: movieTitle      # echoes the anchor Movie's title so each review links back to its film
+  volatility: slow                # allowed because the generator is tool-grounded (web), not parametric
+  defaultWant: 6                  # aim for several reviews per film
+  generator:
+    kind: llm
+    tools: [web]                  # attach the workspace's web-search tool(s); host appends the JSON contract
+    prompt: |
+      You are a film critic's research assistant. For each numbered film below, use web search to find several
+      (up to {{ want }}) real, individual published reviews, and return one record PER review — grounded in the
+      pages you actually find, never invented.
+
+      Films:
+      {% for a in anchors %}{{ a.n }}. {{ a.title }}
+      {% endfor %}
+      For EACH review return these fields (omit any you can't ground; skip a review whose url you can't confirm):
+      - url: the direct link to the review.
+      - title: the review's headline / title.
+      - publication: the outlet it appeared in (e.g. The Guardian, RogerEbert.com).
+      - author: the critic's name, if given.
+      - excerpt: one representative sentence or two, quoted from the review.
+      - reviewDate: the publication date as ISO-8601 (YYYY-MM-DD) if shown; omit if not.
+      - sentiment: 'positive', 'mixed', or 'negative'.
+      - originalScore: the rating exactly as given (e.g. '4/5', 'A-', '★★★★'); omit if none.
+      - score: that rating normalized to 0-10, if it is numeric-convertible.
+      - verdict: a one-sentence takeaway of the review's verdict.
+      Set `sourceIndex` to the film's number. Return MULTIPLE objects per film (one per review).
+  cache:
+    kind: ttl
+    seconds: 604800               # weekly — reviews accrue slowly

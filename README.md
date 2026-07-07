@@ -24,6 +24,89 @@ owns the persistence and the UI.
 | `personalities/roger/` | Ebert-style film-critic voice — used only by the recommend write-up. Rate confirmations and recall replies stay in the default assistant voice. |
 | `src/api/movie.ts` | The **`Movie` type** — a TypeScript class `extends Entity`. Its fields are the shape; its async methods (`movie.streaming`, `movie.details`, `movie.rate`, plus inherited `movie.neighbors`) are affordances callable on an in-scope object. Built to `dist/`. See "Type methods" below. |
 
+## Sample queries
+
+Run these in the Cypher console (Settings → Data → **Query**). Each virtual edge materializes on demand and
+streams its stages in the console's **Trace** tab. Grouped by cost: instant (Neo4j only), generative (an LLM
+call, ~20–40s), web-grounded (LLM + web search, ~30–60s).
+
+> **Gotcha — keep virtual joins in the leading `MATCH` chain.** A virtual join (`SIMILAR_TO`, `SUGGESTS`,
+> `HAS_REVIEW`, `HAS_MOVIE_TASTE_SUMMARY`, `AVAILABLE_ON`) is only materialized when it appears in the query's
+> leading `MATCH` block. A virtual join placed **after a `WITH`** is NOT materialized (returns nothing). Put any
+> `LIMIT`/`ORDER BY` at the END (after `RETURN`), and reach reviews by pinning a film (below), not by piping a
+> recommendation subquery through a `WITH` into `HAS_REVIEW`.
+
+**Instant**
+```cypher
+-- Your top-rated films
+MATCH (me:AssistantUser)-[:RATED]->(r:MovieRating)
+RETURN r.title, r.rating ORDER BY r.rating DESC, r.title LIMIT 15
+```
+
+**Generative (SIMILAR_TO / fan-IN summary / two-stage SUGGESTS)**
+```cypher
+-- Recommendations from films you LOVED, best-rated first, excluding what you've seen
+MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+RETURN DISTINCT m.title, m.year, m.director, m.imdbRating
+ORDER BY m.imdbRating DESC LIMIT 15
+```
+```cypher
+-- Your taste in ~100 words (a fan-IN aggregate node over all your ratings)
+MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
+RETURN ts.summary, ts.count
+```
+```cypher
+-- Recommendations from your WHOLE taste — a two-stage chain (fan-IN summary → fan-OUT SUGGESTS).
+-- This is the TasteBasedRecommendations view.
+MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
+MATCH (ts)-[:SUGGESTS]->(m:Movie)
+WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+RETURN DISTINCT m.title, m.year, m.imdbRating, m.plot,
+       'https://www.imdb.com/title/' + m.imdbId + '/' AS imdbUrl
+ORDER BY m.imdbRating DESC
+```
+```cypher
+-- Films you'd probably HATE (SIMILAR_TO anchored on your LOW ratings)
+MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating <= 4
+MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+RETURN DISTINCT m.title, m.year
+```
+
+**Filters + streaming (SIMILAR_TO ∩ AVAILABLE_ON ∩ SUBSCRIBES_TO)**
+```cypher
+-- French/Italian, pre-1980, under 100 minutes
+MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+  AND m.year < 1980 AND m.runtimeMinutes < 100
+  AND (m.country CONTAINS 'France' OR m.country CONTAINS 'Italy')
+RETURN DISTINCT m.title, m.year, m.country, m.runtimeMinutes
+```
+```cypher
+-- Recommendations you can actually STREAM on a service you subscribe to
+MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
+MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+  AND EXISTS { MATCH (m)-[:AVAILABLE_ON]->(s:StreamingService)
+               WHERE EXISTS { (me)-[:SUBSCRIBES_TO]->(:UserStreamingSubscription {serviceId: s.serviceId}) } }
+RETURN DISTINCT m.title, m.year
+```
+
+**Web-grounded reviews (HAS_REVIEW → many MovieReview nodes)**
+```cypher
+-- Real published reviews of one film — pin the film by title, newest first
+MATCH (m:Movie {title:'Stalker'})-[:HAS_REVIEW]->(r:MovieReview)
+RETURN r.publication, r.reviewDate, r.sentiment, r.originalScore, r.verdict, r.url
+ORDER BY r.reviewDate DESC
+```
+
+You can also click **Run** on the saved views in the console's **Views** tab: `MyFilmTaste`,
+`MovieRecommendations`, `StreamableRecommendations`, `NoirRecommendations`, `MoviesYoullProbablyHate`, and
+`TasteBasedRecommendations`.
+
 ## Why no MovieBuff entity?
 
 The original `movie-finder` kept a `MovieBuff` JPA entity carrying the
