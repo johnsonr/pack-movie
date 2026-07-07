@@ -107,6 +107,14 @@ You can also click **Run** on the saved views in the console's **Views** tab: `M
 `MovieRecommendations`, `StreamableRecommendations`, `NoirRecommendations`, `MoviesYoullProbablyHate`, and
 `TasteBasedRecommendations`.
 
+### Top 3 films with reviews
+
+"My top 3 films, each with its reviews" can't be a single Cypher query: `HAS_REVIEW` is a per-film web search,
+and the engine can't bound a set of virtual `Movie` nodes to 3 before that hop, nor pin several at once (`IN`,
+`UNION`, and variable-pins are all rejected — only a single literal `{title:'…'}` seeds a `Movie` anchor). So
+it ships as the **`Top 3 — Reviews`** lens (`lenses/top-reviews.yml`): it reads your 3 top-rated titles, then
+runs one pinned `HAS_REVIEW` query per title. Three web searches → give it a minute or two.
+
 ## Why no MovieBuff entity?
 
 The original `movie-finder` kept a `MovieBuff` JPA entity carrying the

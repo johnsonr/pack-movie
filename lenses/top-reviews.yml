@@ -1,0 +1,43 @@
+# Reviews for your top 3 rated films. This is a LENS, not a single Cypher query, by necessity: HAS_REVIEW is a
+# per-film web search, and the engine can't bound a set of virtual Movie nodes to 3 before that hop, nor pin
+# several (IN / UNION / variable-pin are all rejected; only a single literal {title:'…'} seeds a Movie anchor).
+# So we first read the 3 top-rated titles (instant), then run one PINNED HAS_REVIEW query per title (the shape
+# that works). Three web searches → give it ~1–3 minutes. Ordered newest-review-first within each film.
+id: top-reviews
+name: Top 3 — Reviews
+description: Web-found reviews for your three highest-rated films.
+spec:
+  kind: cypherscript
+  script: |
+    const top = await gateway.kg.query({
+      cypher: `MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating)
+               RETURN rt.title AS title, rt.rating AS rating
+               ORDER BY rt.rating DESC, rt.title ASC LIMIT 3`,
+      params: JSON.stringify({}),
+    });
+    const esc = (s) => (s || "").replace(/'/g, "\\'");
+    const sections = [];
+    for (const t of (top || [])) {
+      // One PINNED HAS_REVIEW query per film — a single literal {title:'…'} is the only Movie anchor the engine
+      // seeds. Inlined (escaped) rather than a param so it's a literal pin.
+      const reviews = await gateway.kg.query({
+        cypher: `MATCH (m:Movie {title:'${esc(t.title)}'})-[:HAS_REVIEW]->(r:MovieReview)
+                 RETURN r.publication AS publication, r.reviewDate AS reviewDate, r.sentiment AS sentiment,
+                        r.verdict AS verdict, r.url AS url
+                 ORDER BY r.reviewDate DESC`,
+        params: JSON.stringify({}),
+      });
+      const lines = (reviews || []).map((rv) =>
+        `- **${rv.publication || "?"}**` +
+        (rv.reviewDate ? ` · ${rv.reviewDate}` : "") +
+        (rv.sentiment ? ` · ${rv.sentiment}` : "") +
+        (rv.verdict ? ` — ${rv.verdict}` : "") +
+        (rv.url ? ` [link](${rv.url})` : "")
+      ).join("\n");
+      sections.push(`### ${t.title}  ·  your rating ${t.rating}/10\n${lines || "_no reviews found_"}`);
+    }
+    await gateway.lens.present({ content: JSON.stringify({
+      kind: "text",
+      title: "Reviews — your top 3 films",
+      markdown: sections.join("\n\n---\n\n") || "Rate some films first.",
+    }) });
