@@ -67,6 +67,9 @@
       country: Country
       director: Director
       runtimeMinutes: Runtime
+      plot: Plot
+      imdbRating: imdbRating
+      poster: Poster
   cache:
     kind: ttl
     seconds: 2592000        # 30 days — static fact
@@ -185,6 +188,9 @@
       country: Country
       director: Director
       runtimeMinutes: Runtime
+      plot: Plot
+      imdbRating: imdbRating
+      poster: Poster
   cache:
     kind: ttl
     seconds: 604800                 # weekly — matches the summary's refresh cadence

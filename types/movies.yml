@@ -42,6 +42,13 @@
     runtimeMinutes:
       type: int
       description: "Runtime in minutes, e.g. 175. Declared int so `WHERE m.runtimeMinutes > 120` works; OMDb returns 'NNN min' and the host coerces it to the number on materialization."
+    plot: "One-paragraph plot summary from OMDb."
+    imdbRating:
+      type: number
+      description: "IMDb rating 0–10, e.g. 7.8. OMDb returns it as a string; declared number so it's coerced and you can ORDER BY / filter on it."
+    poster: "URL of the film's poster image from OMDb (or 'N/A' when it has none)."
+  # No stored imdbUrl: OMDb doesn't return one, but it is derivable from the id in a query —
+  #   'https://www.imdb.com/title/' + m.imdbId + '/'  AS imdbUrl
   # Methods on a Movie held in working state (`movie.details({})`,
   # `movie.streaming({ country })`) are authored in TypeScript under `src/api/`
   # and COMPILED — they are not declared here. See `src/api/movie.ts` and the
@@ -62,6 +69,9 @@
       country: Country
       director: Director
       runtimeMinutes: Runtime
+      plot: Plot
+      imdbRating: imdbRating
+      poster: Poster
   # SIMILAR_TO: films like one the user rated, sourced from the assistant's own film knowledge
   # (see producers/movie.yml — a `knowledge` producer, not an API). Anchored on a rated film's
   # TITLE; each suggestion is resolved to its imdbId so it canonicalizes onto this Movie spine and

@@ -62,11 +62,19 @@
 # Recommendations from your taste AS A WHOLE — a two-stage virtual chain: the MovieTasteSummary node
 # materializes (fan-IN over your ratings), then SUGGESTS generates films off its prose (fan-OUT). Unlike
 # MovieRecommendations (similars to individual loved films), these are picked to match the overall through-lines.
+#
+# A TABULAR view: it RETURNs specific scalar columns (title, rating, plot, a derived IMDb link, …) and ORDERs
+# them, rather than returning the Movie node. A tabular view is TERMINAL — run it to see the table; it can't be
+# composed into a traversal as `(v:TasteBasedRecommendations)` the way a node view (MovieRecommendations) can.
+# No `outputLabel` (it isn't node-returning). `imdbUrl` is derived from the id; plot/imdbRating are projected
+# onto Movie (types/movies.yml). Ordered by IMDb rating desc, then title.
 - name: TasteBasedRecommendations
-  description: Films picked to match your overall taste, not just one film you loved.
-  outputLabel: Movie
+  description: Films picked to match your overall taste — with plot, rating and an IMDb link, best-rated first.
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
     MATCH (ts)-[:SUGGESTS]->(m:Movie)
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
-    RETURN DISTINCT m
+    RETURN DISTINCT m.title AS title, m.year AS year, m.genre AS genre, m.country AS country,
+           m.director AS director, m.runtimeMinutes AS runtime, m.imdbRating AS imdbRating,
+           m.plot AS plot, 'https://www.imdb.com/title/' + m.imdbId + '/' AS imdbUrl
+    ORDER BY coalesce(toFloat(toString(imdbRating)), 0.0) DESC, title ASC
