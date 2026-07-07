@@ -44,6 +44,9 @@
       {% for c in constraints %}- {{ c }}
       {% endfor %}
       {% endif %}
+      {% if hint %}
+      Steer your choices strongly toward this special request from the viewer: {{ hint }}
+      {% endif %}
       Rules:
       - Suggest up to {{ want }} films in total across all the numbered films.
       - Set `sourceIndex` to the number of the film each suggestion is similar to.
@@ -73,6 +76,37 @@
   cache:
     kind: ttl
     seconds: 2592000        # 30 days — static fact
+
+# movieByImdbId: the OF edge's producer — fetch the canonical Movie for a MovieRating by its imdbId. A plain
+# remote producer over OMDb's getMovie(i=imdbId). This lets a query cross from a rating to the film's full
+# metadata (and onward to reviews/streaming) WITHOUT the user having pre-materialized the Movie: the rating
+# carries only imdbId + title, so
+#   MATCH (u:AssistantUser)-[:RATED]->(rt:MovieRating) WITH rt ORDER BY rt.rating DESC LIMIT 3
+#   MATCH (rt)-[:OF]->(m:Movie)-[:HAS_REVIEW]->(r:MovieReview) RETURN m.title, r.title, r.score
+# resolves the top-3 rated films then their reviews in ONE query. echoKeyAs is unnecessary — OMDb returns the
+# canonical imdbID (projected to imdbId), which equals the queried key, so OF links back by imdbId. Static
+# metadata → 30-day cache, matching the Movie retrieval and similarMovies resolution.
+- name: movieByImdbId
+  kind: remote
+  operation: getMovie
+  args:
+    i: "{keys}"
+  keyTemplate: "{key}"
+  records: "$"
+  project:
+    imdbId: imdbID
+    title: Title
+    year: Year
+    genre: Genre
+    country: Country
+    director: Director
+    runtimeMinutes: Runtime
+    plot: Plot
+    imdbRating: imdbRating
+    poster: Poster
+  cache:
+    kind: ttl
+    seconds: 2592000                  # 30 days — static metadata, same as the Movie retrieval
 
 # streamingByImdb: where a Movie can be streamed IN THE USER'S COUNTRY — a plain remote producer over
 # the Streaming Availability API (getShow by imdbId + country). Powers the AVAILABLE_ON join, which
@@ -165,6 +199,9 @@
       Only suggest films that satisfy ALL of these constraints (skip any that don't):
       {% for c in constraints %}- {{ c }}
       {% endfor %}
+      {% endif %}
+      {% if hint %}
+      Steer your choices strongly toward this special request from the viewer: {{ hint }}
       {% endif %}
       Rules:
       - Suggest up to {{ want }} films in total.
