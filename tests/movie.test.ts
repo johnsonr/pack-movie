@@ -45,19 +45,29 @@ describe("Movie.details", () => {
 });
 
 describe("Movie.rate", () => {
-  it("writes a MovieRating from the movie's fields plus the rating args", async () => {
+  it("attributes the rating to the current user with a rater-inclusive identity key", async () => {
     const createEntry = vi.fn().mockResolvedValue({ id: "mr1" });
+    const query = vi.fn().mockResolvedValue({ rows: [{ id: "rod_johnson_assistant", name: "Rod Johnson" }] });
     const movie = entityForTest(
       Movie,
       { imdbId: "tt0113451", title: "Jade" },
-      mockGateway<GenericGatewayContext>({ repository: { createEntry } }),
+      mockGateway<GenericGatewayContext>({ repository: { createEntry }, kg: { query } }),
     );
 
     await movie.rate({ rating: 7, notes: "messy but fun" });
 
     expect(createEntry).toHaveBeenCalledWith({
       type: "MovieRating",
-      data: { imdbId: "tt0113451", title: "Jade", rating: 7, notes: "messy but fun", watchedOn: undefined },
+      data: {
+        ratingKey: "rod_johnson_assistant::tt0113451",
+        raterId: "rod_johnson_assistant",
+        raterName: "Rod Johnson",
+        imdbId: "tt0113451",
+        title: "Jade",
+        rating: 7,
+        notes: "messy but fun",
+        watchedOn: undefined,
+      },
     });
   });
 });

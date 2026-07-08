@@ -77,24 +77,36 @@ genuinely lacks a detail the user asked for.
 
 ## "I gave X an 8" — record a rating
 
-Run this as one `execute_javascript` and reply with **exactly the string it
-returns** (you don't have the resolved title/id until it runs):
+A rating belongs to a PERSON. For the current user, resolve their own id and build the
+rater-inclusive identity key. Run as one `execute_javascript` and reply with **exactly the
+string it returns**:
 
 ```js
 const userTitle = "The Matrix", rating = 9;   // whole number 1–10
 const omdb = await gateway.omdb.getMovie({ t: userTitle });
 if (!omdb || omdb.Response === "False") return `No film matching "${userTitle}" on OMDb — confirm the title.`;
 const imdbId = omdb.imdbID, title = omdb.Title;
+// The rater is the current user (also a Person node). ratingKey = "<myId>::<imdbId>".
+const meRows = await gateway.kg.query({ cypher: "MATCH (me:AssistantUser) RETURN me.id AS id, me.name AS name LIMIT 1", params: JSON.stringify({}) });
+const me = ((meRows && meRows.rows) ? meRows.rows[0] : (meRows && meRows[0])) || {};
 await gateway.repository.createEntry({ type: "Movie",
   data: { imdbId, title, year: omdb.Year, genre: omdb.Genre, director: omdb.Director } });
 await gateway.repository.createEntry({ type: "MovieRating",
-  data: { imdbId, title, rating },   // add notes/watchedOn if given
+  data: { ratingKey: `${me.id}::${imdbId}`, raterId: me.id, raterName: me.name, imdbId, title, rating },
   relations: [{ predicate: "OF", to: { type: "Movie", imdbId } }] });
 return `Saved ${title} (${imdbId}) — ${rating}/10.`;
 ```
 
-Ratings are whole numbers 1–10 (round a half and confirm). The
-`(User)-[:RATED]->(MovieRating)` edge is added automatically — don't add it.
+Ratings are whole numbers 1–10 (round a half and confirm). The `(me)-[:RATED]->(MovieRating)`
+edge is added automatically for the current user — don't add it.
+
+**Recording a rating for SOMEONE ELSE** ("Lynda gave Barry Lyndon a 9"): the data model
+supports it — `MovieRating` carries `raterId`/`raterName` and hangs off any `Person` by
+`(Person)-[:RATED]->(rating)`, so cross-person views like `MutualFavourites` already work.
+But `create_entry` only auto-anchors the CURRENT user (and its `relations` create outgoing
+edges only), so it can't yet build the `(otherPerson)-[:RATED]->` edge. Until the host adds
+an anchor-on-person path, attributing a rating to another person is a **seeding** operation,
+not a chat one — tell the user that plainly rather than recording it under their own name.
 
 ## "What have I rated?" / "What did I think of X?"
 

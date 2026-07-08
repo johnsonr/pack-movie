@@ -78,3 +78,39 @@
            m.director AS director, m.runtimeMinutes AS runtime, m.imdbRating AS imdbRating,
            m.plot AS plot, 'https://www.imdb.com/title/' + m.imdbId + '/' AS imdbUrl
     ORDER BY coalesce(toFloat(toString(imdbRating)), 0.0) DESC, title ASC
+
+# ── Multi-person views ──────────────────────────────────────────────────────────────────────
+# A MovieRating carries `raterName`/`raterId`, and every rating hangs off its rater by
+# `(Person)-[:RATED]->(MovieRating)` — the current user's own ratings included (their AssistantUser
+# node is also a Person). So "who rated what" and "what would two people both like" are plain reads over
+# MovieRating; no traversal needed since the rater is denormalised onto the rating. MovieRating is a private
+# type, so the scope rewriter still confines every row to your own workspace.
+
+# Every rating in the workspace, by person — your own plus anyone you've recorded ratings for.
+- name: RatingsByRater
+  description: Every recorded rating, grouped by the person who gave it, highest first.
+  cypher: |
+    MATCH (r:MovieRating)
+    RETURN r.raterName AS Rater, r.title AS Film, r.rating AS Score
+    ORDER BY Rater ASC, Score DESC, Film ASC
+
+# Films that TWO OR MORE people both love (rated 8+) — the "what would they both like" view. Generic:
+# any pair/group who share a loved film shows up, with the list of who loves it.
+- name: MutualFavourites
+  description: Films loved (8+) by two or more people — who would enjoy a watch together.
+  cypher: |
+    MATCH (r:MovieRating) WHERE r.rating >= 8
+    WITH r.imdbId AS imdbId, r.title AS title, collect(DISTINCT r.raterName) AS lovers
+    WHERE size(lovers) >= 2
+    RETURN title AS Film, lovers AS LovedBy, size(lovers) AS People
+    ORDER BY People DESC, Film ASC
+
+# The flip side — films people DISAGREE on most: one person loves it (8+), another can't stand it (<=3).
+- name: DividedOpinions
+  description: Films people most disagree on — one loves it, another can't stand it.
+  cypher: |
+    MATCH (hi:MovieRating) WHERE hi.rating >= 8
+    MATCH (lo:MovieRating) WHERE lo.rating <= 3 AND lo.imdbId = hi.imdbId AND lo.raterId <> hi.raterId
+    RETURN hi.title AS Film, hi.raterName AS Loves, hi.rating AS LovesScore,
+           lo.raterName AS Hates, lo.rating AS HatesScore
+    ORDER BY Film ASC

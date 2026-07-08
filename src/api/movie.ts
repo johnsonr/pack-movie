@@ -5,22 +5,34 @@ import { Entity } from "@embabel/runtime-types";
 // so they stay interfaces and live beside the `Movie` type that uses them.
 
 /**
- * The current user's rating of a Movie. Identity is `imdbId`; the framework
- * anchors it to the user via `RATED` on createEntry, so one row per
- * (user, movie) — a re-rate updates in place. Canonical schema lives in
- * `types/movies.yml`; this is the slice `Movie.rate` writes.
+ * A rating of a Movie, attributed to a person. Identity is `ratingKey`
+ * (`<raterId>::<imdbId>`), so one row per (rater, movie); the framework also
+ * anchors it to the current user via `RATED` on createEntry. Canonical schema
+ * lives in `types/movies.yml`; this is the slice `Movie.rate` writes.
  */
 export interface MovieRating {
-  /** IMDb id of the rated Movie — the identity key (same value as Movie.imdbId). */
+  /** Identity key — `<raterId>::<imdbId>`, so two people rating the same film are distinct rows. */
+  ratingKey: string;
+  /** The rater's Person id (the current user's id for their own ratings). */
+  raterId: string;
+  /** The rater's display name, denormalised for cheap recall. */
+  raterName?: string;
+  /** IMDb id of the rated Movie (same value as Movie.imdbId) — a property, not the identity by itself. */
   imdbId: string;
   /** Title, denormalised for cheap recall without a join. */
   title?: string;
   /** Score from 1 (terrible) to 10 (masterpiece). Whole numbers only. */
   rating: number;
-  /** Optional one-line reaction in the user's own words. */
+  /** Optional one-line reaction in the rater's own words. */
   notes?: string;
-  /** Optional ISO-8601 date the user watched the movie. */
+  /** Optional ISO-8601 date the movie was watched. */
   watchedOn?: string;
+}
+
+/** The current user's identity, read from the scoped graph to attribute their own ratings. */
+export interface CurrentUser {
+  id?: string;
+  name?: string;
 }
 
 /** One way to watch a title, as returned per country by Streaming Availability. */
@@ -71,6 +83,7 @@ interface MovieGateway {
   streamingAvailability: { getShow(args: { id: string; country: string }): Promise<StreamingShow> };
   omdb: { getMovie(args: { i: string; plot: string }): Promise<OmdbMovie> };
   repository: { createEntry(args: { type: string; data: MovieRating }): Promise<RatingEntry> };
+  kg: { query(args: { cypher: string; params: string }): Promise<{ rows?: CurrentUser[] } | CurrentUser[]> };
 }
 
 // ─── The type ───────────────────────────────────────────────────────────────
@@ -115,13 +128,20 @@ export class Movie extends Entity {
   }
 
   /**
-   * Record the user's rating of this movie (1–10). Recording IS making the link:
-   * createEntry against MovieRating auto-emits (User)-[:RATED]->(MovieRating) and
-   * upserts by imdbId, so a re-rate updates in place. The same gateway op the
-   * card's star widget calls.
+   * Record the CURRENT USER's rating of this movie (1–10). Recording IS making the
+   * link: createEntry against MovieRating auto-emits (me)-[:RATED]->(MovieRating) —
+   * and `me` is also a Person, so it reads uniformly with other people's ratings.
+   * Identity is `<myId>::<imdbId>`, so a re-rate updates in place. The same gateway
+   * op the card's star widget calls. (Attributing a rating to ANOTHER person is a
+   * separate flow that resolves that person and links their node.)
    */
   async rate(args: { rating: number; notes?: string; watchedOn?: string }): Promise<RatingEntry> {
+    const me = await this.currentUser();
+    const raterId = me.id || "";
     const data: MovieRating = {
+      ratingKey: `${raterId}::${this.imdbId}`,
+      raterId,
+      raterName: me.name,
       imdbId: this.imdbId,
       title: this.title,
       rating: args.rating,
@@ -129,5 +149,15 @@ export class Movie extends Entity {
       watchedOn: args.watchedOn,
     };
     return this.api.repository.createEntry({ type: "MovieRating", data });
+  }
+
+  /** The current user's own Person id + name, read from the scoped graph. */
+  private async currentUser(): Promise<CurrentUser> {
+    const res = await this.api.kg.query({
+      cypher: "MATCH (me:AssistantUser) RETURN me.id AS id, me.name AS name LIMIT 1",
+      params: JSON.stringify({}),
+    });
+    const rows = Array.isArray(res) ? res : res.rows || [];
+    return rows[0] || {};
   }
 }

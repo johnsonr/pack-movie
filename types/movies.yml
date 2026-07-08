@@ -85,6 +85,22 @@
   #   WHERE NOT EXISTS { MATCH (u)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = rec.imdbId }
   #   RETURN rec.title, count(*) AS overlap ORDER BY overlap DESC LIMIT 10
   virtualJoins:
+    # OF: the canonical spine edge (MovieRating)-[:OF]->(Movie). A MovieRating stores only imdbId + title, so
+    # to reach a film's full metadata (or onward to reviews / streaming) from a rating you traverse OF, which
+    # fetches the Movie by imdbId (producer movieByImdbId → OMDb getMovie(i)). This makes the documented
+    # spine `(User)-[:RATED]->(MovieRating)-[:OF]->(Movie)` a real, traversable path — so "top 3 rated films
+    # and their reviews" is a single query: narrow the ratings, OF to the films, HAS_REVIEW to the reviews:
+    #   MATCH (u:AssistantUser)-[:RATED]->(rt:MovieRating) WITH rt ORDER BY rt.rating DESC LIMIT 3
+    #   MATCH (rt)-[:OF]->(m:Movie)-[:HAS_REVIEW]->(r:MovieReview) RETURN m.title, r.title, r.score
+    - anchorLabel: MovieRating
+      relationship: OF
+      keyField: imdbId             # MovieRating.imdbId — the film's IMDb id
+      recordKeyField: imdbId       # the fetched Movie echoes its imdbId (== the queried key) to link back
+      producer: movieByImdbId
+      description: >-
+        The film a rating is OF — its canonical Movie metadata, fetched by imdbId. Traverse this to go from a
+        MovieRating to the full film record (title, year, genre, director, plot, imdbRating) and onward to its
+        reviews or streaming options: (rt:MovieRating)-[:OF]->(m:Movie). One Movie per rating.
     - anchorLabel: MovieRating
       relationship: SIMILAR_TO
       keyField: title              # MovieRating.title — the film the user rated
@@ -198,31 +214,37 @@
 
 - name: MovieRating
   description: |
-    The current user's rating for a Movie. Use this to record what the user
-    thinks of films they've watched. One rating per (user, movie) — when the
-    user re-rates a movie, update the existing entry rather than creating a
-    second one. Reads of this collection power "what have I rated?", "what
-    did I think of X?", and the "exclude already-seen" filter when proposing
-    new recommendations.
-  # `(User)-[:RATED]->(MovieRating)` reads more naturally than the default
-  # `(MovieRating)-[:OWNED_BY]->(User)` for the recall query "what have I
-  # rated?" — `MATCH (u:User {id: $userId})-[:RATED]->(r) RETURN r`.
-  # The framework emits this edge automatically on every `create_entry`
-  # against this type — see RepositoryStore.applyUserAnchor.
+    A rating of a Movie, attributed to a PERSON in the workspace — the current user
+    OR any Person they've recorded a rating for (a friend, a family member). One rating
+    per (rater, movie): re-rating updates in place. Reads power "what have I rated?",
+    "what did <person> think of X?", the "exclude already-seen" filter, and cross-person
+    queries like "films <A> and <B> would both like".
+  # Every rating hangs off a Person by `(Person)-[:RATED]->(MovieRating)`. The current
+  # user's own ratings anchor on their AssistantUser node, which ALSO carries the `Person`
+  # label — so the SAME edge and direction serve "me" and everyone else, and a two-person
+  # query is one uniform join:
+  #   MATCH (a:Person)-[:RATED]->(ra:MovieRating), (b:Person)-[:RATED]->(rb:MovieRating)
+  #   WHERE ra.imdbId = rb.imdbId AND ra.rating >= 8 AND rb.rating >= 8
+  # For the CURRENT user the framework emits `(me)-[:RATED]->` automatically on create_entry
+  # (userAnchor below, from-user). Attributing a rating to ANOTHER person is done by seeding
+  # or a future skill that resolves the person (by email) and links `(person)-[:RATED]->(r)`.
   userAnchor:
     predicate: RATED
     direction: from-user
   properties:
-    imdbId:
+    ratingKey:
       identity: true
-      description: "IMDb id of the rated Movie. The identity key: with the user anchor giving workspace scope, this yields one rating per (user, movie) — a re-rate updates in place instead of duplicating. Use the same value as the corresponding Movie.imdbId so the two records can be joined."
+      description: "The identity key — '<raterId>::<imdbId>', e.g. 'rod_johnson_assistant::tt0110912'. Composite (rater + movie) so two people rating the SAME film are two distinct nodes, and a re-rate by the same person updates in place. When recording for the current user, raterId is the user's own id."
+    raterId: "The id of the Person this rating belongs to — the current user's id for their own ratings, or a contact's Person id (e.g. 'person:jane@example.com'). Matches the Person that (Person)-[:RATED]->(this) links from."
+    raterName: "Display name of the rater (e.g. 'Rod Johnson'), denormalised for cheap recall without a join to the Person."
+    imdbId: "IMDb id of the rated Movie (NOT the identity by itself — a movie can be rated by several people). Use the same value as Movie.imdbId so ratings join to films and to each other."
     title: "Title of the rated movie, denormalised for cheap recall without a join."
     rating:
       type: int
       required: true
       description: "Score from 1 (terrible) to 10 (masterpiece). Whole numbers only."
-    notes: "Optional one-line reaction from the user, in their own words."
-    watchedOn: "Optional ISO-8601 date the user watched the movie."
+    notes: "Optional one-line reaction, in the rater's own words."
+    watchedOn: "Optional ISO-8601 date the movie was watched."
 
 - name: MovieReview
   # Shared/virtual like Movie: materialized on demand, reached FROM a Movie. Not user-owned.

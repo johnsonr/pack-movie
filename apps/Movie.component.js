@@ -45,18 +45,33 @@ const styles = `
 // upserts by imdbId (a re-rate updates in place). Same gateway op the Movie.rate
 // pack method uses.
 function buildRating(host, imdbId, title, gw) {
-  let current = 0, noteVal = '';
+  let current = 0, noteVal = '', me = null;
   const wrap = document.createElement('div'); wrap.className = 'mr-wrap';
   const stars = document.createElement('div'); stars.className = 'mr-stars';
   const label = document.createElement('span'); label.className = 'mr-label';
   const starEls = [];
   const paint = (n) => { starEls.forEach((s, i) => s.classList.toggle('mr-on', i < n)); label.textContent = n ? n + '/10' : 'Rate'; };
+  // The current user's own Person id + name — the rater for a rating made from this card.
+  const currentUser = async () => {
+    if (me) return me;
+    const res = await gw.kg.query({ cypher: 'MATCH (u:AssistantUser) RETURN u.id AS id, u.name AS name LIMIT 1', params: JSON.stringify({}) });
+    const rows = (res && res.rows) ? res.rows : (res || []);
+    me = rows[0] || {};
+    return me;
+  };
   const submit = async (n) => {
     current = n; paint(n); label.textContent = 'Saving…';
     try {
+      const u = await currentUser();
+      const raterId = u.id || '';
       await gw.repository.createEntry({
         type: 'MovieRating',
-        data: { imdbId, title, rating: n, watchedOn: new Date().toISOString().slice(0, 10), notes: noteVal || undefined },
+        data: {
+          ratingKey: raterId + '::' + imdbId,
+          raterId, raterName: u.name,
+          imdbId, title, rating: n,
+          watchedOn: new Date().toISOString().slice(0, 10), notes: noteVal || undefined,
+        },
       });
       label.textContent = 'Rated ' + n + '/10 ✓';
     } catch (e) { label.textContent = 'Failed: ' + (e && e.message); }

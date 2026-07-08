@@ -45,7 +45,10 @@
       {% endfor %}
       {% endif %}
       {% if hint %}
-      Steer your choices strongly toward this special request from the viewer: {{ hint }}
+      The viewer has a specific request: {{ hint }}. Treat it as a HARD requirement — EVERY film you
+      suggest MUST clearly satisfy "{{ hint }}". This OVERRIDES similarity: if a film is a great match
+      to the anchors but does not satisfy the request, DROP it and pick one that does. Never include a
+      film that only partly fits just to reach the count — a shorter list of true matches is better.
       {% endif %}
       Rules:
       - Suggest up to {{ want }} films in total across all the numbered films.
@@ -201,7 +204,10 @@
       {% endfor %}
       {% endif %}
       {% if hint %}
-      Steer your choices strongly toward this special request from the viewer: {{ hint }}
+      The viewer has a specific request: {{ hint }}. Treat it as a HARD requirement — EVERY film you
+      suggest MUST clearly satisfy "{{ hint }}". This OVERRIDES similarity: if a film is a great match
+      to the anchors but does not satisfy the request, DROP it and pick one that does. Never include a
+      film that only partly fits just to reach the count — a shorter list of true matches is better.
       {% endif %}
       Rules:
       - Suggest up to {{ want }} films in total.
