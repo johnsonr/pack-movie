@@ -19,7 +19,7 @@ owns the persistence and the UI.
 | `apis/` | Two OpenAPI 3 specs — OMDb (film metadata) and Streaming Availability (per-country streaming options). Calls go through `gateway.omdb.*` / `gateway.streamingAvailability.*` from `execute_javascript` / `execute_python`. |
 | `types/movies.yml` | `Movie` (canonical metadata, keyed by IMDb id) and `MovieRating` (the user's score for a Movie). Read/written via the workspace repository tools. `MovieRating` declares `userAnchor: { predicate: RATED, direction: from-user }`, so the assistant auto-emits `(User)-[:RATED]->(MovieRating)` on every `create_entry`. |
 | `skills/recommend-movie/` | "What should I watch?" / "where can I stream X?" — owns the OMDb + Streaming Availability workflow and the cardinal rules (don't default the country; the response field is `streamingOptions`, not `streamingInfo`). Activates only for the recommend / availability paths. |
-| `skills/rate-movie/` | "I just watched X, give it N" — ensures the `Movie` record exists, then creates or updates the `MovieRating` with an explicit `OF` edge back to the Movie. The `RATED` user edge is automatic. |
+| `skills/rate-movie/` | "I just watched X, give it N" — ensures the `Movie` record exists, then creates or updates the `MovieRating` (keyed by imdbId). The `RATED` user edge is automatic; the `(MovieRating)-[:OF]->(Movie)` spine edge is a virtual join (`producers/movie.yml`), materialized on demand from the rating's imdbId. |
 | `skills/recall-movies/` | "What did I think of X?" / "what have I rated?" — reads `MovieRating` via `list_entries` for single-title recall, or Cypher for anything cross-cutting. |
 | `personalities/roger/` | Ebert-style film-critic voice — used only by the recommend write-up. Rate confirmations and recall replies stay in the default assistant voice. |
 | `src/api/movie.ts` | The **`Movie` type** — a TypeScript class `extends Entity`. Its fields are the shape; its async methods (`movie.streaming`, `movie.details`, `movie.rate`, plus inherited `movie.neighbors`) are affordances callable on an in-scope object. Built to `dist/`. See "Type methods" below. |
@@ -30,11 +30,13 @@ Run these in the Cypher console (Settings → Data → **Query**). Each virtual 
 streams its stages in the console's **Trace** tab. Grouped by cost: instant (Neo4j only), generative (an LLM
 call, ~20–40s), web-grounded (LLM + web search, ~30–60s).
 
-> **Gotcha — keep virtual joins in the leading `MATCH` chain.** A virtual join (`SIMILAR_TO`, `SUGGESTS`,
-> `HAS_REVIEW`, `HAS_MOVIE_TASTE_SUMMARY`, `AVAILABLE_ON`) is only materialized when it appears in the query's
-> leading `MATCH` block. A virtual join placed **after a `WITH`** is NOT materialized (returns nothing). Put any
-> `LIMIT`/`ORDER BY` at the END (after `RETURN`), and reach reviews by pinning a film (below), not by piping a
-> recommendation subquery through a `WITH` into `HAS_REVIEW`.
+> **`WITH … LIMIT` narrows the chain.** A leading `MATCH … WITH x ORDER BY … LIMIT n` bounds the anchor `x`
+> to the top-n BEFORE the rest of the query expands off it — and a downstream virtual join (`OF`, `HAS_REVIEW`,
+> `SIMILAR_TO`, …) hanging off `x` DOES still materialize, fetching for only those n. This holds whether `x`
+> is a real node (a `MovieRating`) or one an upstream virtual join already materialized (a `Movie` from
+> `SUGGESTS`). So "top-3 rated films and their reviews" is one query (below). What is NOT supported is pinning
+> SEVERAL virtual `Movie` anchors by value at once — `IN`, `UNION`, and variable-pins are rejected; only a
+> single literal `{title:'…'}` seeds a `Movie` anchor. Bound with `WITH … LIMIT` (a narrowing), not a value set.
 
 **Instant**
 ```cypher
@@ -102,18 +104,67 @@ MATCH (m:Movie {title:'Stalker'})-[:HAS_REVIEW]->(r:MovieReview)
 RETURN r.publication, r.reviewDate, r.sentiment, r.originalScore, r.verdict, r.url
 ORDER BY r.reviewDate DESC
 ```
+```cypher
+-- Your top-3 rated films AND their reviews, in ONE query. `rt` is a real MovieRating, so the WITH…LIMIT
+-- narrows it to your 3 highest ratings; OF then fetches each film (by imdbId) and HAS_REVIEW its reviews —
+-- both bounded to those 3, never your whole rated library. (rt)-[:OF]->(m) is the canonical spine hop.
+MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating)
+WITH rt ORDER BY rt.rating DESC LIMIT 3
+MATCH (rt)-[:OF]->(m:Movie)-[:HAS_REVIEW]->(r:MovieReview)
+RETURN m.title, r.publication, r.originalScore, r.verdict, r.url
+ORDER BY m.title, r.reviewDate DESC
+```
 
 You can also click **Run** on the saved views in the console's **Views** tab: `MyFilmTaste`,
-`MovieRecommendations`, `StreamableRecommendations`, `NoirRecommendations`, `MoviesYoullProbablyHate`, and
-`TasteBasedRecommendations`.
+`MovieRecommendations`, `StreamableRecommendations`, `NoirRecommendations`, `MoviesYoullProbablyHate`,
+`TasteBasedRecommendations`, and the multi-person views `RatingsByRater`, `MutualFavourites`, `DividedOpinions`.
+
+## Multi-person taste
+
+A `MovieRating` is attributed to a **person** — the current user *or* any contact — via
+`(Person)-[:RATED]->(MovieRating)`, and the rating carries `raterName`/`raterId`. Your own node
+(`AssistantUser`) is also a `Person`, so one uniform edge covers everyone and you can compare tastes across
+people. (`MutualFavourites` / `RatingsByRater` / `DividedOpinions` are the saved forms of these.)
+
+```cypher
+-- Films you and one named person both love
+MATCH (me:AssistantUser)-[:RATED]->(rm:MovieRating)              WHERE rm.rating >= 8
+MATCH (other:Person)-[:RATED]->(ro:MovieRating)
+  WHERE other <> me AND other.name = 'Lynda M Coker'
+    AND ro.rating >= 8 AND ro.imdbId = rm.imdbId
+RETURN rm.title AS Film, rm.rating AS Mine, ro.rating AS Theirs ORDER BY Film
+```
+```cypher
+-- Whom do you share taste with? (data-only, no LLM)
+MATCH (me:AssistantUser)-[:RATED]->(rm:MovieRating)  WHERE rm.rating >= 8
+MATCH (other:Person)-[:RATED]->(ro:MovieRating)
+  WHERE other <> me AND ro.rating >= 8 AND ro.imdbId = rm.imdbId
+RETURN other.name AS With, collect(rm.title) AS FilmsYouBothLove, count(*) AS Overlap
+ORDER BY Overlap DESC
+```
+```cypher
+-- SHARED recommendations — films that appeal to BOTH, new to both. Two SIMILAR_TO fan-outs that intersect;
+-- this now works because a generative pick can name every anchor it resembles (sourceIndexes). ~1–2 min.
+MATCH (me:AssistantUser)-[:RATED]->(rm:MovieRating) WHERE rm.rating >= 8
+MATCH (rm)-[:SIMILAR_TO]->(m:Movie)
+MATCH (other:Person)-[:RATED]->(ro:MovieRating) WHERE other.name = 'Lynda M Coker' AND ro.rating >= 8
+MATCH (ro)-[:SIMILAR_TO]->(m)
+WHERE NOT EXISTS { (s:MovieRating) WHERE s.imdbId = m.imdbId }
+RETURN DISTINCT m.title, m.year, m.director LIMIT 20
+```
+
+Recording a rating for another person is a **seeding** operation today — `create_entry` only auto-anchors the
+current user (its `relations` are outgoing-only), so a contact's ratings are added by Cypher, not chat.
 
 ### Top 3 films with reviews
 
-"My top 3 films, each with its reviews" can't be a single Cypher query: `HAS_REVIEW` is a per-film web search,
-and the engine can't bound a set of virtual `Movie` nodes to 3 before that hop, nor pin several at once (`IN`,
-`UNION`, and variable-pins are all rejected — only a single literal `{title:'…'}` seeds a `Movie` anchor). So
-it ships as the **`Top 3 — Reviews`** lens (`lenses/top-reviews.yml`): it reads your 3 top-rated titles, then
-runs one pinned `HAS_REVIEW` query per title. Three web searches → give it a minute or two.
+"My top 3 rated films, each with its reviews" is a single Cypher query — the last example above. The `OF` edge
+`(MovieRating)-[:OF]->(Movie)` bridges a rating to its film, so a `WITH rt ORDER BY rt.rating DESC LIMIT 3`
+narrows to your 3 top ratings and both downstream hops (`OF`, then the per-film web-search `HAS_REVIEW`) fetch
+for only those three. Three web searches → give it a minute or two.
+
+The **`Top 3 — Reviews`** lens (`lenses/top-reviews.yml`) remains as a saved, click-to-run form of the same
+result (it pins each of the 3 titles individually); the single query above is the general pattern.
 
 ## Why no MovieBuff entity?
 
@@ -153,10 +204,12 @@ Install via the assistant's pack manager. On install the pack contributes:
 - The `roger` personality, available to `recommend-movie` write-ups.
 
 Ratings persist into the workspace graph store via
-`NamedEntityDataRepository`. Both edges land on `create_entry` for a
-`MovieRating` — the explicit `OF` to the Movie and the implicit
-`RATED` to the User — so the schema projector exposes them to the
-Cypher tool and the DICE proposition pipeline.
+`NamedEntityDataRepository`. `create_entry` for a `MovieRating` lands the
+implicit `RATED` edge to the User; the `(MovieRating)-[:OF]->(Movie)` spine
+edge is a virtual join (materialized on demand by imdbId, `producers/movie.yml`),
+so the rating carries only imdbId + title at rest and the film is fetched when
+a query traverses `OF`. The schema projector exposes both edges to the Cypher
+tool and the DICE proposition pipeline.
 
 ## Type methods (TypeScript)
 
