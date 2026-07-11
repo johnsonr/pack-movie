@@ -89,16 +89,17 @@ const imdbId = omdb.imdbID, title = omdb.Title;
 // The rater is the current user (also a Person node). ratingKey = "<myId>::<imdbId>".
 const meRows = await gateway.kg.query({ cypher: "MATCH (me:AssistantUser) RETURN me.id AS id, me.name AS name LIMIT 1", params: JSON.stringify({}) });
 const me = ((meRows && meRows.rows) ? meRows.rows[0] : (meRows && meRows[0])) || {};
-await gateway.repository.createEntry({ type: "Movie",
-  data: { imdbId, title, year: omdb.Year, genre: omdb.Genre, director: omdb.Director } });
 await gateway.repository.createEntry({ type: "MovieRating",
-  data: { ratingKey: `${me.id}::${imdbId}`, raterId: me.id, raterName: me.name, imdbId, title, rating },
-  relations: [{ predicate: "OF", to: { type: "Movie", imdbId } }] });
+  data: { ratingKey: `${me.id}::${imdbId}`, raterId: me.id, raterName: me.name, imdbId, title, rating } });
 return `Saved ${title} (${imdbId}) — ${rating}/10.`;
 ```
 
 Ratings are whole numbers 1–10 (round a half and confirm). The `(me)-[:RATED]->(MovieRating)`
-edge is added automatically for the current user — don't add it.
+edge is added automatically for the current user — don't add it. Do NOT persist a `Movie`
+node or an `OF` edge: the rating stores only `imdbId`/`title`, and the
+`(MovieRating)-[:OF]->(Movie)` spine hop is a VIRTUAL join — the film's full metadata is
+fetched from OMDb by `imdbId` whenever a query traverses `OF` (same write shape as the
+`movie.rate()` card widget).
 
 **Recording a rating for SOMEONE ELSE** ("Lynda gave Barry Lyndon a 9"): the data model
 supports it — `MovieRating` carries `raterId`/`raterName` and hangs off any `Person` by

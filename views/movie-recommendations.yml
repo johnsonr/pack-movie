@@ -6,57 +6,193 @@
 # now that it is the `MovieTasteSummary` virtual NODE, the LLM reduction happens in the producer and this stays
 # pure Cypher too (see MyFilmTaste below). Per-service tagging still needs a lens — see ../lenses/.
 
-# Films similar to ones you rated highly, that you haven't already seen.
+# Your rated films with their full Movie metadata, best-rated first. PARAMETERIZED (bind variables
+# with defaults — the host's specs/PARAMETERIZED_VIEWS_MCP.md): run bare for your top 10, or tune
+# via an inline argument map on the label: MATCH (m:RatedMovies {limit: 3, minRating: 8}) RETURN m.
+# The OF hop is the virtual spine edge — each film is fetched by imdbId on demand — so `limit` also
+# BOUNDS the per-film fetch fan-out by construction. Replaces the former rated-movies JS lens, which
+# needed persisted Movie nodes that this pack's virtual design never stores.
+- name: RatedMovies
+  description: The films you've rated, with their full details — your highest-rated first.
+  outputLabel: Movie
+  params:
+    limit:
+      type: int
+      default: 10
+      description: "Maximum films to return (also caps the per-film metadata fetches)."
+    minRating:
+      type: int
+      default: 1
+      description: "Only include films you rated at least this (1-10)."
+  cypher: |
+    MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= $minRating
+    WITH rt ORDER BY rt.rating DESC, rt.title ASC LIMIT $limit
+    MATCH (rt)-[:OF]->(m:Movie)
+    RETURN DISTINCT m
+
+# Films similar to ones you rated highly, that you haven't already seen. PARAMETERIZED: `steer` is a
+# free-text soft steer flowing into the SIMILAR_TO generator's `{ai: {hint}}` directive (empty = unsteered,
+# identical to the bare edge); `minYear` floors the release year (default 1900 = no effective floor).
+# Tune inline: MATCH (m:MovieRecommendations {steer: 'obscure, and French', minYear: 1970}) RETURN m
 - name: MovieRecommendations
   description: Films like the ones you've loved, that you haven't already seen.
   outputLabel: Movie
+  params:
+    steer:
+      type: string
+      default: ""
+      description: "A soft steer for the picks — a mood, an era, a language ('obscure, and French'). Empty = unsteered."
+    minYear:
+      type: int
+      default: 1900
+      description: "Only include films released in or after this year."
+    maxYear:
+      type: int
+      default: 2100
+      description: "Only include films released in or before this year."
   cypher: |
     MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
-    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    MATCH (rt)-[:SIMILAR_TO {ai: {hint: $steer}}]->(m:Movie)
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+      AND m.year >= $minYear AND m.year <= $maxYear
     RETURN DISTINCT m
 
-# Recommendations you can actually stream now, on one of your own services (SUBSCRIBES_TO).
-- name: StreamableRecommendations
-  description: Recommended films you can stream now on your services.
+# Films like ONE NAMED FILM — "movies like Heat" — excluding anything you've already rated. The anchor
+# is PINNED by title, so the engine binds your real MovieRating when you have rated the film, and
+# literal-seeds a transient anchor from the title when you haven't (spec §3.3) — you can ask for
+# similars to ANY film you can name, rated or not. `movie` has no default (a "like what?" view is
+# meaningless bare), so it must be supplied inline:
+#   MATCH (m:MoviesLike {movie: 'Heat'}) RETURN m
+#   MATCH (m:MoviesLike {movie: 'Heat', steer: 'slow-burn, European', minYear: 1990}) RETURN m
+- name: MoviesLike
+  description: Films similar to one named film, excluding anything you've already rated. Name the film via the `movie` param.
   outputLabel: Movie
+  params:
+    movie:
+      type: string
+      description: "The film to find similars to, e.g. 'Heat'. Required — the view has no meaning without it."
+    steer:
+      type: string
+      default: ""
+      description: "A soft steer for the picks — a mood, an era, a language ('obscure, and French'). Empty = unsteered."
+    minYear:
+      type: int
+      default: 1900
+      description: "Only include films released in or after this year."
+    maxYear:
+      type: int
+      default: 2100
+      description: "Only include films released in or before this year."
   cypher: |
-    MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
-    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    MATCH (me:AssistantUser)
+    MATCH (rt:MovieRating {title: $movie})-[:SIMILAR_TO {ai: {hint: $steer}}]->(m:Movie)
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
-      AND EXISTS { MATCH (m)-[:AVAILABLE_ON]->(s:StreamingService)
-                   WHERE EXISTS { (me)-[:SUBSCRIBES_TO]->(:UserStreamingSubscription {serviceId: s.serviceId}) } }
+      AND toLower(m.title) <> toLower($movie)
+      AND m.year >= $minYear AND m.year <= $maxYear
     RETURN DISTINCT m
+
+# Recommendations from your TASTE AS A WHOLE that you can stream now, INCLUDED with one of your own
+# subscriptions (SUBSCRIBES_TO ∩ offerType='subscription' — a rent/buy/free listing on a service you
+# have is a paid extra, not "streamable now", so it is excluded). Anchored on the taste profile, not
+# per-film similars: the two-stage virtual chain HAS_MOVIE_TASTE_SUMMARY (fan-IN over your ratings) →
+# SUGGESTS (fan-OUT off the summary prose), like TasteBasedRecommendations — then AVAILABLE_ON narrows
+# to what your services carry. A free-text steer composes on the SUGGESTS edge:
+#   -[:SUGGESTS {ai: {hint: 'westerns only', model: 'chat_cheap'}}]->  (steers + tunes generation; stripped before the final read).
+# TABULAR: one row per (film, service you have), with the plot and the deep link. A real MATCH on
+# AVAILABLE_ON (not EXISTS) binds `s` AND the edge `ao`: watchLink/offerType are per-(film, service)
+# facts and live ON THE EDGE (producer edgeProject) — the StreamingService node is shared across films
+# (identity serviceId), so reading them off the node would show one film's link on another's row.
+- name: StreamableRecommendations
+  description: Films matching your overall taste, included with your streaming subscriptions right now — with plot and the link to watch each one.
+  params:
+    steer:
+      type: string
+      default: ""
+      description: "A soft steer for the taste-based picks ('westerns only', 'something short'). Empty = unsteered."
+    minYear:
+      type: int
+      default: 1900
+      description: "Only include films released in or after this year."
+    maxYear:
+      type: int
+      default: 2100
+      description: "Only include films released in or before this year."
+  cypher: |
+    MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
+    MATCH (ts)-[:SUGGESTS {ai: {hint: $steer}}]->(m:Movie)
+    WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+      AND m.year >= $minYear AND m.year <= $maxYear
+    MATCH (m)-[ao:AVAILABLE_ON]->(s:StreamingService)
+    WHERE ao.offerType = 'subscription'
+      AND EXISTS { (me)-[:SUBSCRIBES_TO]->(:UserStreamingSubscription {serviceId: s.serviceId}) }
+    RETURN DISTINCT m.title AS title, m.year AS year, m.genre AS genre, m.director AS director,
+           m.imdbRating AS imdbRating, m.imdbVotes AS imdbVotes, m.plot AS plot,
+           s.serviceName AS service, ao.watchLink AS watchLink
+    ORDER BY coalesce(toFloat(toString(imdbRating)), 0.0) DESC,
+             coalesce(imdbVotes, 0) DESC, title ASC, service ASC
 
 # The anti-recommendation, for fun: films like the ones you rated LOW — what you'd probably also hate.
 # Same SIMILAR_TO edge, anchored on your DISLIKED films (rating <= 4) instead of your loved ones.
 - name: MoviesYoullProbablyHate
   description: Films like the ones you rated poorly — steer clear.
   outputLabel: Movie
+  params:
+    minYear:
+      type: int
+      default: 1900
+      description: "Only include films released in or after this year."
+    maxYear:
+      type: int
+      default: 2100
+      description: "Only include films released in or before this year."
   cypher: |
     MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating <= 4
     MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+      AND m.year >= $minYear AND m.year <= $maxYear
     RETURN DISTINCT m
 
 # Film-noir picks, drawn from your taste (similars to your loved films, kept if the genre matches).
 - name: NoirRecommendations
   description: Film-noir picks based on what you've loved.
   outputLabel: Movie
+  params:
+    steer:
+      type: string
+      default: ""
+      description: "A soft steer within noir ('neo-noir', 'classic 40s'). Empty = unsteered."
+    minYear:
+      type: int
+      default: 1900
+      description: "Only include films released in or after this year."
+    maxYear:
+      type: int
+      default: 2100
+      description: "Only include films released in or before this year."
   cypher: |
     MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
-    MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
+    MATCH (rt)-[:SIMILAR_TO {ai: {hint: $steer}}]->(m:Movie)
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
       AND m.genre CONTAINS 'Noir'
+      AND m.year >= $minYear AND m.year <= $maxYear
     RETURN DISTINCT m
 
 # Your film taste in ~100 words — the fan-IN MovieTasteSummary node, synthesized from every rating you've
 # recorded and cached weekly. Pure Cypher now that the summary is a node: no JS lens, just traverse the edge.
+# PARAMETERIZED: `voice` sets the register of the prose reduction via the `{ai: {voice}}` directive
+# (the pack ships an Ebert-style `roger` personality — the default keeps the summary in that voice).
+# The steering is part of the producer's cache key, so a different voice regenerates rather than
+# serving the cached default-voice summary.
 - name: MyFilmTaste
   description: A ~100-word read on your taste in film, distilled from your ratings.
   outputLabel: MovieTasteSummary
+  params:
+    voice:
+      type: string
+      default: "the warm, erudite voice of film critic Roger Ebert"
+      description: "The register the summary is written in — e.g. 'second person, brisk', 'a noir narrator'."
   cypher: |
-    MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
+    MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY {ai: {voice: $voice}}]->(ts:MovieTasteSummary)
     RETURN ts
 
 # Recommendations from your taste AS A WHOLE — a two-stage virtual chain: the MovieTasteSummary node
@@ -70,10 +206,24 @@
 # onto Movie (types/movies.yml). Ordered by IMDb rating desc, then title.
 - name: TasteBasedRecommendations
   description: Films picked to match your overall taste — with plot, rating and an IMDb link, best-rated first.
+  params:
+    steer:
+      type: string
+      default: ""
+      description: "A soft steer for the picks ('westerns only', 'nothing bleak'). Empty = unsteered."
+    minYear:
+      type: int
+      default: 1900
+      description: "Only include films released in or after this year."
+    maxYear:
+      type: int
+      default: 2100
+      description: "Only include films released in or before this year."
   cypher: |
     MATCH (me:AssistantUser)-[:HAS_MOVIE_TASTE_SUMMARY]->(ts:MovieTasteSummary)
-    MATCH (ts)-[:SUGGESTS]->(m:Movie)
+    MATCH (ts)-[:SUGGESTS {ai: {hint: $steer}}]->(m:Movie)
     WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
+      AND m.year >= $minYear AND m.year <= $maxYear
     RETURN DISTINCT m.title AS title, m.year AS year, m.genre AS genre, m.country AS country,
            m.director AS director, m.runtimeMinutes AS runtime, m.imdbRating AS imdbRating,
            m.plot AS plot, 'https://www.imdb.com/title/' + m.imdbId + '/' AS imdbUrl

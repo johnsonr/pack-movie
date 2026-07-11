@@ -44,6 +44,9 @@
       {% for c in constraints %}- {{ c }}
       {% endfor %}
       {% endif %}
+      {% if era %}
+      Strongly prefer films from this era or period: {{ era }}.
+      {% endif %}
       {% if hint %}
       The viewer has a specific request: {{ hint }}. Treat it as a HARD requirement — EVERY film you
       suggest MUST clearly satisfy "{{ hint }}". This OVERRIDES similarity: if a film is a great match
@@ -77,6 +80,7 @@
       runtimeMinutes: Runtime
       plot: Plot
       imdbRating: imdbRating
+      imdbVotes: imdbVotes
       poster: Poster
   cache:
     kind: ttl
@@ -97,6 +101,12 @@
   args:
     i: "{keys}"
   keyTemplate: "{key}"
+  # OMDb's `i` accepts ONE imdbId per call — a space-joined batch ("tt1 tt2 …") returns a single
+  # junk record for the whole chunk, so nothing links back and every rating→movie join reads
+  # EMPTY (issue #384's live failure: 145 ratings → 3 batched calls → 3 unlinkable records →
+  # 0 OF edges). batchSafe: false forces one getMovie(i=<id>) per key (fetched concurrently on
+  # virtual threads, and the 30-day cache makes repeats free).
+  batchSafe: false
   records: "$"
   project:
     imdbId: imdbID
@@ -108,6 +118,7 @@
     runtimeMinutes: Runtime
     plot: Plot
     imdbRating: imdbRating
+    imdbVotes: imdbVotes
     poster: Poster
   cache:
     kind: ttl
@@ -133,6 +144,12 @@
   project:
     serviceId: "service.id"
     serviceName: "service.name"
+  # watchLink/offerType are facts about (film, service), NOT about the service: StreamingService is
+  # identity-merged on serviceId, so one shared `netflix` node can't carry two films' links (the first
+  # film to materialize would pin its link onto every later film's row — the Glory/Once-Upon-a-Time-
+  # in-the-West clobber). edgeProject puts them on each film's own AVAILABLE_ON edge instead:
+  #   MATCH (m)-[ao:AVAILABLE_ON]->(s) RETURN s.serviceName, ao.offerType, ao.watchLink
+  edgeProject:
     watchLink: "link"
     offerType: "type"
   cache:
@@ -205,6 +222,9 @@
       {% for c in constraints %}- {{ c }}
       {% endfor %}
       {% endif %}
+      {% if era %}
+      Strongly prefer films from this era or period: {{ era }}.
+      {% endif %}
       {% if hint %}
       The viewer has a specific request: {{ hint }}. Treat it as a HARD requirement — EVERY film you
       suggest MUST clearly satisfy "{{ hint }}". This OVERRIDES similarity: if a film is a great match
@@ -235,6 +255,7 @@
       runtimeMinutes: Runtime
       plot: Plot
       imdbRating: imdbRating
+      imdbVotes: imdbVotes
       poster: Poster
   cache:
     kind: ttl

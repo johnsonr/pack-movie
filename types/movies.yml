@@ -46,6 +46,9 @@
     imdbRating:
       type: number
       description: "IMDb rating 0–10, e.g. 7.8. OMDb returns it as a string; declared number so it's coerced and you can ORDER BY / filter on it."
+    imdbVotes:
+      type: int
+      description: "Number of IMDb votes, e.g. 1234567 — a popularity proxy. OMDb returns a digit-grouped string ('1,234,567'); declared int so it's coerced and you can ORDER BY / filter on it."
     poster: "URL of the film's poster image from OMDb (or 'N/A' when it has none)."
   # No stored imdbUrl: OMDb doesn't return one, but it is derivable from the id in a query —
   #   'https://www.imdb.com/title/' + m.imdbId + '/'  AS imdbUrl
@@ -71,6 +74,7 @@
       runtimeMinutes: Runtime
       plot: Plot
       imdbRating: imdbRating
+      imdbVotes: imdbVotes
       poster: Poster
   # SIMILAR_TO: films like one the user rated, sourced from the assistant's own film knowledge
   # (see producers/movie.yml — a `knowledge` producer, not an API). Anchored on a rated film's
@@ -134,16 +138,16 @@
   description: |
     A streaming service (Netflix, Stan, …) a Movie can be watched on in the user's country.
     VIRTUAL — fetched on demand from the Streaming Availability API when a query traverses
-    AVAILABLE_ON; never stored. Use it to filter recommendations to films the user can actually
-    stream, and to tell them WHERE:
-      MATCH (m:Movie)-[:AVAILABLE_ON]->(s:StreamingService) RETURN m.title, collect(s.serviceName)
+    AVAILABLE_ON; never stored. ONE node per service (identity serviceId), shared by every film —
+    the per-film facts (the deep link, how it's offered) live on each film's own AVAILABLE_ON edge.
+    Use it to filter recommendations to films the user can actually stream, and to tell them WHERE:
+      MATCH (m:Movie)-[ao:AVAILABLE_ON]->(s:StreamingService)
+      RETURN m.title, s.serviceName, ao.offerType, ao.watchLink
   properties:
     serviceId:
       identity: true
       description: "Streaming service id, e.g. 'netflix'. Identity key."
     serviceName: "Display name of the service, e.g. 'Netflix'."
-    watchLink: "Deep link to the title on the service."
-    offerType: "How it's available: subscription / free / rent / buy."
   # AVAILABLE_ON: the streaming options for a Movie in the user's country (producer streamingByImdb).
   # Anchored on Movie.imdbId. A plain MATCH (not OPTIONAL) filters to films that ARE streamable —
   # films with no option in-country simply drop out. Chains after SIMILAR_TO in one query:
@@ -161,6 +165,9 @@
       description: >-
         Streaming services where this Movie can be watched in the user's country. Only films with at
         least one option appear, so a plain MATCH filters recommendations to what the user can stream.
+        The EDGE carries the per-film option details (producer edgeProject): `watchLink` (deep link to
+        THIS film on the service) and `offerType` (subscription / free / rent / buy) — read them off
+        the relationship: MATCH (m)-[ao:AVAILABLE_ON]->(s) RETURN ao.watchLink, ao.offerType.
 
 - name: UserStreamingSubscription
   description: |
