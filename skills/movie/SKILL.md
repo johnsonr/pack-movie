@@ -1,6 +1,6 @@
 ---
 name: movie
-description: Everything about films — look up a movie's facts (plot, cast, director, year, runtime, ratings), recommend something to watch, find where a title is streamable, record a rating, or recall past ratings. Activate this skill for ANY movie-related request, including "tell me about <film>", "what's the plot of <film>", "who directed/starred in <film>", "when did <film> come out", "what should I watch", "where can I stream <film>", "I gave <film> an 8", and "what have I rated". For film facts, this pack's OMDb source is authoritative — use it, not web search.
+description: Everything about films — look up a movie's facts (plot, cast, director, year, runtime, ratings), recommend something to watch, find where a title is streamable, record a rating, or recall past ratings. Activate this skill for ANY movie-related request, including "tell me about <film>", "what's the plot of <film>", "who directed/starred in <film>", "when did <film> come out", "what should I watch", "where can I stream <film>", "I gave <film> an 8", "rate <film>" (even with no score yet), and "what have I rated". For film facts, this pack's OMDb source is authoritative — use it, not web search.
 ---
 
 # Movies
@@ -75,11 +75,74 @@ genuinely lacks a detail the user asked for.
 5. **If the call errors, SAY the tool failed — never substitute web search or
    "memory" and never invent services/links.**
 
+## Asking the user to choose — `choices` payloads
+
+Whenever a flow needs the user to pick from a small closed set (a score, one of
+several matching films), do NOT guess, do NOT pick silently, and do NOT bury the
+options in prose. Instead the script RETURNS a `choices` payload as its result,
+and you then present the question and options to the user and STOP — take no
+recording/lookup action until they pick. The structured result lets a client
+that can render forms show one; everywhere else, present the options as a short
+list. The payload shape:
+
+```json
+{"kind": "choices",
+ "question": "<one short question>",
+ "options": ["<option>", "..."],
+ "context": { "<ids the follow-up turn needs>": "..." },
+ "hint": "Present these options to the user and wait for their pick."}
+```
+
+Carry the ids the next turn needs in `context` so you never re-resolve.
+
+### Film named, NO score yet — "Rate Heat for me", "I watched Heat last night"
+
+Resolve the film via OMDb first (disambiguates and yields the imdbId), then
+return the choices payload and wait:
+
+```js
+const userTitle = "Heat";
+const omdb = await gateway.omdb.getMovie({ t: userTitle });
+if (!omdb || omdb.Response === "False") return `No film matching "${userTitle}" on OMDb — confirm the title.`;
+return JSON.stringify({
+  kind: "choices",
+  question: `How would you rate ${omdb.Title} (${omdb.Year})?`,
+  options: ["1","2","3","4","5","6","7","8","9","10"],
+  context: { imdbId: omdb.imdbID, title: omdb.Title },
+  hint: "Present these options to the user and wait for their pick, then record the rating.",
+});
+```
+
+When the user answers with a score, record it with the rating script below —
+but use `context.imdbId` / `context.title` from the payload and SKIP the OMDb
+re-lookup.
+
+### Several films match — "Crash", "The Getaway"
+
+When an OMDb search (`getMovie({ s })`) returns more than one plausible match
+and the user's words don't settle it (year, director, "the newer one"):
+
+```js
+const results = await gateway.omdb.getMovie({ s: "Crash" });
+const hits = (results.Search || []).filter((h) => h.Type === "movie").slice(0, 5);
+if (hits.length > 1) return JSON.stringify({
+  kind: "choices",
+  question: `Which "Crash" do you mean?`,
+  options: hits.map((h) => `${h.Title} (${h.Year})`),
+  context: { candidates: hits.map((h) => ({ imdbId: h.imdbID, title: h.Title, year: h.Year })) },
+  hint: "Present these options to the user and wait for their pick, then continue with that film's imdbId.",
+});
+```
+
+Then continue the original request (lookup, rating, streaming) with the chosen
+candidate's `imdbId` from `context`.
+
 ## "I gave X an 8" — record a rating
 
 A rating belongs to a PERSON. For the current user, resolve their own id and build the
 rater-inclusive identity key. Run as one `execute_javascript` and reply with **exactly the
-string it returns**:
+string it returns**. (If the user named a film but gave NO score, do not run this yet —
+see "Asking the user to choose" above.)
 
 ```js
 const userTitle = "The Matrix", rating = 9;   // whole number 1–10

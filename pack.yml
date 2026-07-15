@@ -8,7 +8,7 @@ description: |
   persist into the workspace graph and feed back into future
   recommendations. The bundled `roger` personality gives the
   recommendation write-up a Roger-Ebert voice.
-version: 0.2.0
+version: 0.3.0
 author: Rod Johnson
 url: https://github.com/johnsonr/pack-movie
 tags:
