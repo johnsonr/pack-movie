@@ -1,6 +1,6 @@
 ---
 name: movie
-description: Everything about films — look up a movie's facts (plot, cast, director, year, runtime, ratings), recommend something to watch, find where a title is streamable, record a rating, or recall past ratings. Activate this skill for ANY movie-related request, including "tell me about <film>", "what's the plot of <film>", "who directed/starred in <film>", "when did <film> come out", "what should I watch", "where can I stream <film>", "I gave <film> an 8", "rate <film>" (even with no score yet), and "what have I rated". For film facts, this pack's OMDb source is authoritative — use it, not web search.
+description: Films — facts (this pack's OMDb source is authoritative, NOT web search), recommendations, streaming availability, and ratings. Activate for ANY movie request; it returns the methods and rules to follow.
 ---
 
 # Movies
