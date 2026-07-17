@@ -10,7 +10,7 @@ description: Recommended films, tagged with which of your streaming services hav
 spec:
   kind: cypherscript
   script: |
-    const rows = await gateway.kg.query({
+    const { rows } = await gateway.kg.query({
       cypher: `MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating) WHERE rt.rating >= 8
                MATCH (rt)-[:SIMILAR_TO]->(m:Movie)
                WHERE NOT EXISTS { (me)-[:RATED]->(seen:MovieRating) WHERE seen.imdbId = m.imdbId }
@@ -26,5 +26,5 @@ spec:
     await gateway.lens.present({ content: JSON.stringify({
       kind: "movie-recommendations",
       title: "Recommended — streamable ones tagged",
-      movies: (rows && rows.rows) ? rows.rows : (rows || []),
+      movies: rows,
     }) });

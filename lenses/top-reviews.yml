@@ -9,7 +9,7 @@ description: Web-found reviews for your three highest-rated films.
 spec:
   kind: cypherscript
   script: |
-    const top = await gateway.kg.query({
+    const { rows: top } = await gateway.kg.query({
       cypher: `MATCH (me:AssistantUser)-[:RATED]->(rt:MovieRating)
                RETURN rt.title AS title, rt.rating AS rating
                ORDER BY rt.rating DESC, rt.title ASC LIMIT 3`,
@@ -17,17 +17,17 @@ spec:
     });
     const esc = (s) => (s || "").replace(/'/g, "\\'");
     const sections = [];
-    for (const t of (top || [])) {
+    for (const t of top) {
       // One PINNED HAS_REVIEW query per film — a single literal {title:'…'} is the only Movie anchor the engine
       // seeds. Inlined (escaped) rather than a param so it's a literal pin.
-      const reviews = await gateway.kg.query({
+      const { rows: reviews } = await gateway.kg.query({
         cypher: `MATCH (m:Movie {title:'${esc(t.title)}'})-[:HAS_REVIEW]->(r:MovieReview)
                  RETURN r.publication AS publication, r.reviewDate AS reviewDate, r.sentiment AS sentiment,
                         r.verdict AS verdict, r.url AS url
                  ORDER BY r.reviewDate DESC`,
         params: JSON.stringify({}),
       });
-      const lines = (reviews || []).map((rv) =>
+      const lines = reviews.map((rv) =>
         `- **${rv.publication || "?"}**` +
         (rv.reviewDate ? ` · ${rv.reviewDate}` : "") +
         (rv.sentiment ? ` · ${rv.sentiment}` : "") +
