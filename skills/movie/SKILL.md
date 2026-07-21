@@ -16,7 +16,7 @@ All API calls go through `gateway.<ns>.<method>(args)` from inside
 |---|---|
 | `gateway.omdb.getMovie(args)` | Pass exactly ONE of `i` (IMDb id, cheapest), `t` (exact title), `s` (search term). |
 | `gateway.streamingAvailability.getShow({ id, country })` | `id` is the IMDb id (with `tt`). `searchShowsByTitle({ country, title })` when you don't have an id. |
-| `gateway.repository.listEntries({ type })` | Read workspace entries. **Call the named methods — `gateway.repository.listEntries(...)`, not `gateway.repository(...)` (the namespace is not a function).** |
+| `gateway.kg.query({ cypher, params })` | Read workspace entries — there is NO `listEntries`. Reads go through the graph via Cypher; `gateway.repository` is create / update / delete + `describe` only. |
 | `gateway.repository.createEntry({ type, data, relations })` | Create/merge an entry (MERGEs on the identity key). |
 
 ## Look up a film — "tell me about X", plot, cast, director, year, runtime
@@ -42,7 +42,8 @@ genuinely lacks a detail the user asked for.
 
 ## "What should I watch?" — a recommendation
 
-1. **Exclude what they've seen:** `gateway.repository.listEntries({ type: "MovieRating" })`,
+1. **Exclude what they've seen:** read their ratings via Cypher —
+   `gateway.kg.query` over `(me:AssistantUser)-[:RATED]->(r:MovieRating)-[:OF]->(m:Movie)`,
    read `imdbId`/`rating`. Empty is fine.
 2. **Honour preferences** from the user's profile (directors, genres, mood in your
    context). If vague ("something good"), ask ONE clarifying question first.
@@ -174,7 +175,8 @@ not a chat one — tell the user that plainly rather than recording it under the
 
 ## "What have I rated?" / "What did I think of X?"
 
-`gateway.repository.listEntries({ type: "MovieRating" })` — optionally filter by
+Read via Cypher — `gateway.kg.query` over
+`(me:AssistantUser)-[:RATED]->(r:MovieRating)-[:OF]->(m:Movie)` — optionally filter by
 title substring or `imdbId`. Report the score and quote any `notes` verbatim.
 If nothing matches, say so plainly — never invent a rating. For cross-cuts
 (highest-rated noirs, rated-above-8-and-streaming), use the Cypher tool; the
