@@ -5,7 +5,7 @@ description: |
   Agent Skills — `recommend-movie` (pick something to watch / where can I
   stream X), `rate-movie` (record a rating), `recall-movies` (read prior
   ratings) — backed by the `Movie` and `MovieRating` types so ratings
-  persist into the workspace graph and feed back into future
+  persist into the world graph and feed back into future
   recommendations. The bundled `roger` personality gives the
   recommendation write-up a Roger-Ebert voice.
 version: 0.3.0
