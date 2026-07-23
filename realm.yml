@@ -10,7 +10,7 @@ description: |
   recommendation write-up a Roger-Ebert voice.
 version: 0.3.0
 author: Rod Johnson
-url: https://github.com/johnsonr/pack-movie
+url: https://github.com/johnsonr/realm-movie
 tags:
   - movies
   - recommendations
