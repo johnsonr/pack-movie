@@ -1,12 +1,12 @@
 ---
 name: movie
-description: Films — facts (this pack's OMDb source is authoritative, NOT web search), recommendations, streaming availability, and ratings. Activate for ANY movie request; it returns the methods and rules to follow.
+description: Films — facts (this realm's OMDb source is authoritative, NOT web search), recommendations, streaming availability, and ratings. Activate for ANY movie request; it returns the methods and rules to follow.
 ---
 
 # Movies
 
-One skill for everything film-related. The pack ships two APIs (`omdb`,
-`streaming_availability`), the `Movie` and `MovieRating` workspace types, and the
+One skill for everything film-related. The realm ships two APIs (`omdb`,
+`streaming_availability`), the `Movie` and `MovieRating` world types, and the
 `roger` personality (Roger-Ebert voice for write-ups).
 
 All API calls go through `gateway.<ns>.<method>(args)` from inside
@@ -16,7 +16,7 @@ All API calls go through `gateway.<ns>.<method>(args)` from inside
 |---|---|
 | `gateway.omdb.getMovie(args)` | Pass exactly ONE of `i` (IMDb id, cheapest), `t` (exact title), `s` (search term). |
 | `gateway.streamingAvailability.getShow({ id, country })` | `id` is the IMDb id (with `tt`). `searchShowsByTitle({ country, title })` when you don't have an id. |
-| `gateway.kg.query({ cypher, params })` | Read workspace entries — there is NO `listEntries`. Reads go through the graph via Cypher; `gateway.repository` is create / update / delete + `describe` only. |
+| `gateway.kg.query({ cypher, params })` | Read world entries — there is NO `listEntries`. Reads go through the graph via Cypher; `gateway.repository` is create / update / delete + `describe` only. |
 | `gateway.repository.createEntry({ type, data, relations })` | Create/merge an entry (MERGEs on the identity key). |
 
 ## Look up a film — "tell me about X", plot, cast, director, year, runtime
